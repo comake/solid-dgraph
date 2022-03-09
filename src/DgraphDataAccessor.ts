@@ -1,9 +1,4 @@
 import type { Readable } from 'stream';
-import arrayifyStream from 'arrayify-stream';
-import dgraph from 'dgraph-js';
-import { DataFactory } from 'n3';
-import type { Quad, Term } from 'rdf-js';
-import * as RdfString from 'rdf-string-ttl';
 import {
   RepresentationMetadata,
   NotFoundHttpError,
@@ -22,6 +17,11 @@ import type {
   DataAccessor,
   Guarded,
 } from '@solid/community-server';
+import arrayifyStream from 'arrayify-stream';
+import dgraph from 'dgraph-js';
+import { DataFactory } from 'n3';
+import type { Quad, Term } from 'rdf-js';
+import * as RdfString from 'rdf-string-ttl';
 import { NON_RDF_KEYS, MAX_REQUEST_RETRIES, getGlobalDgraphClientInstance } from './DgraphUtil';
 
 const { defaultGraph, namedNode } = DataFactory;
@@ -413,7 +413,6 @@ export class DgraphDataAccessor implements DataAccessor {
   }
 
   private termToEscapedString(term: Term): string {
-    /* eslint-disable-next-line unicorn/prefer-string-replace-all */
     return RdfString.termToString(term).replace(/"/gu, '\\"');
   }
 }

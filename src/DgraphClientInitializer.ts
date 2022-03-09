@@ -1,8 +1,8 @@
 import { promises as fsPromises } from 'fs';
 import * as grpc from '@grpc/grpc-js';
+import { Initializer, getLoggerFor } from '@solid/community-server';
 import dgraph, { Operation } from 'dgraph-js';
 import type { DgraphClient } from 'dgraph-js';
-import { Initializer, getLoggerFor } from '@solid/community-server';
 import { DEFAULT_SCHEMA, setGlobalDgraphClientInstance } from './DgraphUtil';
 
 export interface DgraphConfiguration {

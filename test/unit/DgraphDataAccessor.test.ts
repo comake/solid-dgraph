@@ -1,13 +1,14 @@
 import 'jest-rdf';
+import fs from 'fs';
 import type { Readable } from 'stream';
-import arrayifyStream from 'arrayify-stream';
-import dgraph from 'dgraph-js';
-import { DataFactory } from 'n3';
 import type { Guarded } from '@solid/community-server';
 import { BasicRepresentation, RepresentationMetadata, NotFoundHttpError,
   NotImplementedHttpError, UnsupportedMediaTypeHttpError,
   SingleRootIdentifierStrategy, guardedStreamFrom, INTERNAL_QUADS,
   CONTENT_TYPE_TERM, LDP, RDF } from '@solid/community-server';
+import arrayifyStream from 'arrayify-stream';
+import dgraph from 'dgraph-js';
+import { DataFactory } from 'n3';
 import { DgraphClientInitializer } from '../../src/DgraphClientInitializer';
 import { DgraphDataAccessor } from '../../src/DgraphDataAccessor';
 
@@ -16,17 +17,8 @@ const { literal, namedNode, quad } = DataFactory;
 jest.mock('dgraph-js');
 const mockDgraph = dgraph as jest.Mocked<typeof dgraph>;
 
-jest.mock('fs', (): any => {
-  const originalModule = jest.requireActual('fs');
-  return {
-    /* eslint-disable-next-line @typescript-eslint/naming-convention */
-    __esModule: true,
-    ...originalModule,
-    promises: {
-      readFile: jest.fn().mockImplementation(originalModule.promises.readFile),
-    },
-  };
-});
+jest.mock('fs');
+const mockFs = fs as jest.Mocked<typeof fs>;
 
 function simplifyQuery(query: string | string[]): string {
   if (Array.isArray(query)) {
@@ -34,6 +26,14 @@ function simplifyQuery(query: string | string[]): string {
   }
   return query.replace(/\s+|\n/gu, ' ').trim();
 }
+
+const CONFIG = JSON.stringify({
+  connectionUri: 'localhost',
+  ports: {
+    grpc: '9080',
+    zero: '6080',
+  },
+});
 
 describe('A DgraphDataAccessor', (): void => {
   const base = 'http://test.com/';
@@ -112,6 +112,7 @@ describe('A DgraphDataAccessor', (): void => {
     (mockDgraph.Mutation as unknown as jest.Mock).mockImplementation((): MutationMock => new MutationMock());
     (mockDgraph.Request as unknown as jest.Mock).mockImplementation((): RequestMock => new RequestMock());
     (mockDgraph.ERR_ABORTED as unknown) = new Error('Transaction has been aborted. Please retry');
+    (mockFs.promises as unknown) = { readFile: jest.fn().mockReturnValue(CONFIG) };
 
     await new DgraphClientInitializer(configFilePath).handle();
     accessor = new DgraphDataAccessor(identifierStrategy);

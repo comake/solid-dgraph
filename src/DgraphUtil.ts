@@ -51,6 +51,10 @@ export function setGlobalDgraphClientInstance(dgraphClient: ActualDgraphClient):
   DgraphClient.getInstance().client = dgraphClient;
 }
 
+/**
+ * Get the global Dgraph client instance.
+ * @returns {@link ActualDgraphClient} the global DgraphClient instance
+ */
 export function getGlobalDgraphClientInstance(): ActualDgraphClient {
   return DgraphClient.getInstance().client;
 }

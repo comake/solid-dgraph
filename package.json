@@ -36,27 +36,31 @@
     "build": "npm run build:ts && npm run build:components",
     "build:components": "componentsjs-generator -s src -c dist/components -i .componentsignore",
     "build:ts": "tsc",
-    "jest": "jest --coverageReporters text-summary --",
+    "jest": "jest --coverageReporters text-summary",
     "lint": "eslint . --cache",
     "test": "npm run test:ts && npm run jest",
+    "test:ts": "tsc -p test --noEmit",
     "prepare": "npm run build"
   },
-  "husky": {
-    "hooks": {
-      "pre-commit": "npm run build && npm run lint && npm run test:unit && npm run test:integration"
-    }
+  "commitlint": {
+    "extends": [
+      "@commitlint/config-conventional"
+    ]
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.5.5",
     "@types/arrayify-stream": "^1.0.0",
     "arrayify-stream": "^1.0.0",
     "dgraph-js": "^21.3.1",
+    "n3": "^1.13.0",
     "rdf-string-ttl": "^1.2.0"
   },
   "peerDependencies": {
     "@solid/community-server": "^3.0.0"
   },
   "devDependencies": {
+    "@commitlint/cli": "^16.2.1",
+    "@commitlint/config-conventional": "^16.2.1",
     "@solid/community-server": "^3.0.0",
     "@tsconfig/node14": "^1.0.0",
     "@types/jest": "^27.4.0",
@@ -69,7 +73,7 @@
     "eslint-plugin-jest": "^26.0.0",
     "eslint-plugin-tsdoc": "^0.2.10",
     "eslint-plugin-unused-imports": "^1.0.1",
-    "husky": "^4.3.6",
+    "husky": "^7.0.4",
     "jest": "^27.4.7",
     "jest-rdf": "^1.7.0",
     "ts-jest": "^27.1.3",
