@@ -22,6 +22,9 @@
     "config",
     "dist"
   ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
+  },
   "lsd:module": "https://linkedsoftwaredependencies.org/bundles/npm/@comake/solid-dgraph",
   "lsd:components": "dist/components/components.jsonld",
   "lsd:contexts": {
