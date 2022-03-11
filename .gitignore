@@ -1,5 +1,6 @@
 .eslintcache
 dist
 node_modules
+coverage
 componentsjs-error-state.json
 settings.json

@@ -1,5 +1,5 @@
 {
-  "name": "solid-dgraph",
+  "name": "@comake/solid-dgraph",
   "version": "0.0.0",
   "description": "A dgraph database backend for a Community Solid Server",
   "keywords": [
@@ -36,7 +36,7 @@
     "build": "npm run build:ts && npm run build:components",
     "build:components": "componentsjs-generator -s src -c dist/components -i .componentsignore",
     "build:ts": "tsc",
-    "jest": "jest --coverageReporters text-summary",
+    "jest": "jest --coverageReporters text-summary --",
     "lint": "eslint . --cache",
     "test": "npm run test:ts && npm run jest",
     "test:ts": "tsc -p test --noEmit",

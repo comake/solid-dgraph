@@ -1,7 +1,4 @@
-import type { DgraphClient as ActualDgraphClient } from 'dgraph-js';
-import { DgraphClient } from './DgraphClient';
-
-export const MAX_REQUEST_RETRIES = 3;
+export const MAX_TRANSACTION_RETRIES = 3;
 export const INITIALIZATION_CHECK_PERIOD = 10;
 export const MAX_INITIALIZATION_TIMEOUT_DURATION = 1500;
 export const NON_RDF_KEYS = new Set([ 'uid', 'uri', 'container', 'dgraph.type' ]);
@@ -42,19 +39,8 @@ export const DEFAULT_SCHEMA = `
   }
 `;
 
-/**
- * Sets the global Dgraph client instance.
- * This will cause a DgraphDataAccessor to use this client.
- * @param dgraphClient - A DgraphClient.
- */
-export function setGlobalDgraphClientInstance(dgraphClient: ActualDgraphClient): void {
-  DgraphClient.getInstance().client = dgraphClient;
-}
-
-/**
- * Get the global Dgraph client instance.
- * @returns {@link ActualDgraphClient} the global DgraphClient instance
- */
-export function getGlobalDgraphClientInstance(): ActualDgraphClient {
-  return DgraphClient.getInstance().client;
+export async function wait(duration: number): Promise<void> {
+  return new Promise((resolve): void => {
+    setTimeout(resolve, duration);
+  });
 }

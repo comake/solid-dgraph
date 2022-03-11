@@ -1,0 +1,29 @@
+{
+  "@context": [
+    "https://linkedsoftwaredependencies.org/bundles/npm/@comake/solid-dgraph/^0.0.0/components/context.jsonld",
+    "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^3.0.0/components/context.jsonld",
+  ],
+  "@graph": [
+    {
+      "comment": "Stores data in a dgraph database. Only supports quad object streams.",
+      "@id": "urn:solid-dgraph:default:DgraphDataAccessor",
+      "@type": "DgraphDataAccessor",
+      "identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
+      "configFilePath": { "@id": "urn:solid-server:default:variable:dgraphConfig" }
+    },
+    {
+      "comment": "A default store setup with a dgraph database backend.",
+      "@id": "urn:solid-server:default:ResourceStore_Backend",
+      "@type": "DataAccessorBasedStore",
+      "identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
+      "auxiliaryStrategy": { "@id": "urn:solid-server:default:AuxiliaryStrategy" },
+      "accessor": { "@id": "urn:solid-dgraph:default:DgraphDataAccessor" }
+    },
+    {
+      "comment": "This makes it so all incoming data is converted to quad objects.",
+      "@id": "urn:solid-server:default:ResourceStore_Converting",
+      "RepresentationConvertingStore:_options_inConverter": { "@id": "urn:solid-server:default:RepresentationConverter" },
+      "RepresentationConvertingStore:_options_inType": "internal/quads"
+    }
+  ]
+}

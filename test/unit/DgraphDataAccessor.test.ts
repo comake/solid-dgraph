@@ -9,8 +9,8 @@ import { BasicRepresentation, RepresentationMetadata, NotFoundHttpError,
 import arrayifyStream from 'arrayify-stream';
 import dgraph from 'dgraph-js';
 import { DataFactory } from 'n3';
-import { DgraphClientInitializer } from '../../src/DgraphClientInitializer';
 import { DgraphDataAccessor } from '../../src/DgraphDataAccessor';
+import * as DgraphUtil from '../../src/DgraphUtil';
 
 const { literal, namedNode, quad } = DataFactory;
 
@@ -20,20 +20,31 @@ const mockDgraph = dgraph as jest.Mocked<typeof dgraph>;
 jest.mock('fs');
 const mockFs = fs as jest.Mocked<typeof fs>;
 
-function simplifyQuery(query: string | string[]): string {
-  if (Array.isArray(query)) {
-    query = query.join(' ');
-  }
-  return query.replace(/\s+|\n/gu, ' ').trim();
-}
+const MOCK_DGRAPH_SCHEMA = '<uri>: string @index(exact) .';
 
-const CONFIG = JSON.stringify({
+const CONFIG_WITHOUT_SCHEMA = JSON.stringify({
   connectionUri: 'localhost',
   ports: {
     grpc: '9080',
     zero: '6080',
   },
 });
+
+const CONFIG_WITH_SCHEMA = JSON.stringify({
+  connectionUri: 'localhost',
+  ports: {
+    grpc: '9080',
+    zero: '6080',
+  },
+  schema: MOCK_DGRAPH_SCHEMA,
+});
+
+function simplifyQuery(query: string | string[]): string {
+  if (Array.isArray(query)) {
+    query = query.join(' ');
+  }
+  return query.replace(/\s+|\n/gu, ' ').trim();
+}
 
 describe('A DgraphDataAccessor', (): void => {
   const base = 'http://test.com/';
@@ -43,6 +54,8 @@ describe('A DgraphDataAccessor', (): void => {
   let metadata: RepresentationMetadata;
   let data: Guarded<Readable>;
   let newTxn: jest.Mock<dgraph.Txn>;
+  let alter: any;
+  let setSchema: any;
   let queryWithVars: jest.Mock<Promise<dgraph.Response>>;
   let queryError: any;
   let updateError: any;
@@ -77,6 +90,8 @@ describe('A DgraphDataAccessor', (): void => {
     });
     discard = jest.fn();
     newTxn = jest.fn((): any => ({ queryWithVars, doRequest, discard }));
+    alter = jest.fn();
+    setSchema = jest.fn();
 
     class MutationMock {
       public setNquads?: string;
@@ -108,14 +123,55 @@ describe('A DgraphDataAccessor', (): void => {
       }
     }
 
-    (mockDgraph.DgraphClient as jest.Mock).mockReturnValue({ newTxn, alter: jest.fn() });
+    (mockDgraph.DgraphClient as jest.Mock).mockReturnValue({ newTxn, alter });
     (mockDgraph.Mutation as unknown as jest.Mock).mockImplementation((): MutationMock => new MutationMock());
     (mockDgraph.Request as unknown as jest.Mock).mockImplementation((): RequestMock => new RequestMock());
+    (mockDgraph.Operation as unknown as jest.Mock).mockReturnValue({ setSchema });
     (mockDgraph.ERR_ABORTED as unknown) = new Error('Transaction has been aborted. Please retry');
-    (mockFs.promises as unknown) = { readFile: jest.fn().mockReturnValue(CONFIG) };
+    (mockFs.promises as unknown) = { readFile: jest.fn().mockReturnValue(CONFIG_WITHOUT_SCHEMA) };
 
-    await new DgraphClientInitializer(configFilePath).handle();
-    accessor = new DgraphDataAccessor(identifierStrategy);
+    accessor = new DgraphDataAccessor(configFilePath, identifierStrategy);
+  });
+
+  it('sets the DgraphClient schema using the default schema.', async(): Promise<void> => {
+    await accessor.getData({ path: 'http://identifier' });
+    expect(alter).toHaveBeenCalledTimes(1);
+    expect(setSchema).toHaveBeenCalledTimes(1);
+    expect(setSchema).toHaveBeenCalledWith(DgraphUtil.DEFAULT_SCHEMA);
+  });
+
+  it('sets the DgraphClient schema using input schema.', async(): Promise<void> => {
+    (mockFs.promises.readFile as jest.Mock).mockReturnValue(CONFIG_WITH_SCHEMA);
+    await accessor.getData({ path: 'http://identifier' });
+    expect(alter).toHaveBeenCalledTimes(1);
+    expect(setSchema).toHaveBeenCalledTimes(1);
+    expect(setSchema).toHaveBeenCalledWith(MOCK_DGRAPH_SCHEMA);
+  });
+
+  it('errors when the database fails to initialize within the max initialization timeout.', async(): Promise<void> => {
+    jest.useFakeTimers();
+    jest.mock('../../src/DgraphUtil');
+    const mockDgraphUtil = DgraphUtil as jest.Mocked<typeof DgraphUtil>;
+    (mockDgraphUtil.MAX_INITIALIZATION_TIMEOUT_DURATION as unknown) = 0;
+
+    // Make the schema alter operation take a long time
+    alter.mockImplementation(
+      async(): Promise<void> => new Promise((resolve): void => {
+        setTimeout(resolve, 1000);
+      }),
+    );
+
+    accessor = new DgraphDataAccessor(configFilePath, identifierStrategy);
+    // Send a first request which will start initialization of database
+    accessor.getData({ path: 'http://identifier' }).catch((): void => {
+      // Do nothing
+    });
+    // Send a second request which should fail after waiting MAX_INITIALIZATION_TIMEOUT_DURATION
+    const promise = accessor.getData({ path: 'http://identifier' });
+    jest.advanceTimersByTime(DgraphUtil.INITIALIZATION_CHECK_PERIOD);
+    await expect(promise).rejects.toThrow('Failed to initialize Dgraph database.');
+    jest.runAllTimers();
+    jest.useRealTimers();
   });
 
   it('can only handle quad data.', async(): Promise<void> => {

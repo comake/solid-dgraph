@@ -1,4 +1,6 @@
+import { promises as fsPromises } from 'fs';
 import type { Readable } from 'stream';
+import * as grpc from '@grpc/grpc-js';
 import {
   RepresentationMetadata,
   NotFoundHttpError,
@@ -18,11 +20,14 @@ import type {
   Guarded,
 } from '@solid/community-server';
 import arrayifyStream from 'arrayify-stream';
-import dgraph from 'dgraph-js';
+import dgraph, { Operation } from 'dgraph-js';
+import type { DgraphClient } from 'dgraph-js';
 import { DataFactory } from 'n3';
 import type { Quad, Term } from 'rdf-js';
 import * as RdfString from 'rdf-string-ttl';
-import { NON_RDF_KEYS, MAX_REQUEST_RETRIES, getGlobalDgraphClientInstance } from './DgraphUtil';
+import { NON_RDF_KEYS, MAX_TRANSACTION_RETRIES, DEFAULT_SCHEMA,
+  INITIALIZATION_CHECK_PERIOD, MAX_INITIALIZATION_TIMEOUT_DURATION,
+  wait } from './DgraphUtil';
 
 const { defaultGraph, namedNode } = DataFactory;
 
@@ -31,15 +36,26 @@ export interface DgraphQuery {
   vars: any;
 }
 
+export interface DgraphConfiguration {
+  connectionUri: string;
+  ports: { grpc: string; zero: string };
+  schema?: string;
+}
+
 /**
  * Stores all data and metadata of resources in a DGraph Database.
  */
 export class DgraphDataAccessor implements DataAccessor {
   protected readonly logger = getLoggerFor(this);
 
+  private databaseInitialized = false;
+  private initializingDatabase = false;
+  private dgraphClient?: DgraphClient;
+  private readonly configFilePath: string;
   private readonly identifierStrategy: IdentifierStrategy;
 
-  public constructor(identifierStrategy: IdentifierStrategy) {
+  public constructor(configFilePath: string, identifierStrategy: IdentifierStrategy) {
+    this.configFilePath = configFilePath;
     this.identifierStrategy = identifierStrategy;
   }
 
@@ -178,22 +194,6 @@ export class DgraphDataAccessor implements DataAccessor {
     return await this.sendDgraphDelete(name, parent);
   }
 
-  private async sendDgraphQuery(query: DgraphQuery, tries = 1): Promise<any> {
-    const txn = getGlobalDgraphClientInstance().newTxn({ readOnly: true });
-    try {
-      const response = await txn.queryWithVars(query.queryString, query.vars);
-      return response.getJson();
-    } catch (error: unknown) {
-      if (error === dgraph.ERR_ABORTED && tries < MAX_REQUEST_RETRIES) {
-        return await this.sendDgraphQuery(query, tries + 1);
-      }
-
-      throw error;
-    } finally {
-      await txn.discard();
-    }
-  }
-
   private async sendDgraphDelete(name: string, parentName?: string): Promise<void> {
     let query = `
       query {
@@ -325,19 +325,83 @@ export class DgraphDataAccessor implements DataAccessor {
     await this.transactDgraphRequest(request);
   }
 
-  private async transactDgraphRequest(request: dgraph.Request, tries = 1): Promise<void> {
-    const txn = getGlobalDgraphClientInstance().newTxn();
-    try {
-      await txn.doRequest(request);
-    } catch (error: unknown) {
-      if (error === dgraph.ERR_ABORTED && tries < MAX_REQUEST_RETRIES) {
-        await this.transactDgraphRequest(request, tries + 1);
-      } else {
-        throw error;
-      }
-    } finally {
-      await txn.discard();
+  private async transactDgraphRequest(request: dgraph.Request): Promise<void> {
+    return this.createAndPerformDatabaseTransaction(
+      async(transaction: dgraph.Txn): Promise<void> => {
+        await transaction.doRequest(request);
+      },
+    );
+  }
+
+  private async sendDgraphQuery(query: DgraphQuery): Promise<any> {
+    return this.createAndPerformDatabaseTransaction(
+      async(transaction: dgraph.Txn): Promise<any> => {
+        const response = await transaction.queryWithVars(query.queryString, query.vars);
+        return response.getJson();
+      },
+    );
+  }
+
+  private async createAndPerformDatabaseTransaction<T>(
+    transactionBlock: (transaction: dgraph.Txn) => Promise<T>,
+    tries = 1,
+  ): Promise<T> {
+    await this.ensureDatabaseIsInitialized();
+
+    if (!this.databaseInitialized) {
+      throw new Error('Failed to initialize Dgraph database.');
     }
+
+    const transaction = this.dgraphClient!.newTxn();
+    try {
+      return await transactionBlock(transaction);
+    } catch (error: unknown) {
+      if (error === dgraph.ERR_ABORTED && tries < MAX_TRANSACTION_RETRIES) {
+        return await this.createAndPerformDatabaseTransaction(transactionBlock, tries + 1);
+      }
+      throw error;
+    } finally {
+      await transaction.discard();
+    }
+  }
+
+  private async ensureDatabaseIsInitialized(waitTime = 0): Promise<void> {
+    if (!this.databaseInitialized && !this.initializingDatabase) {
+      await this.initializeDatabase();
+    } else if (!this.databaseInitialized && this.initializingDatabase &&
+      waitTime <= MAX_INITIALIZATION_TIMEOUT_DURATION) {
+      await wait(INITIALIZATION_CHECK_PERIOD);
+      await this.ensureDatabaseIsInitialized(waitTime + INITIALIZATION_CHECK_PERIOD);
+    }
+  }
+
+  private async initializeDatabase(): Promise<void> {
+    this.initializingDatabase = true;
+    this.logger.info(`Initializing Dgraph Client`);
+
+    const configText = await fsPromises.readFile(this.configFilePath, 'utf8');
+    const configuration: DgraphConfiguration = JSON.parse(configText);
+    this.dgraphClient = this.createDgraphClientFromConfiguration(configuration);
+
+    await this.setDgraphSchema(configuration.schema ?? DEFAULT_SCHEMA);
+
+    this.databaseInitialized = true;
+    this.initializingDatabase = false;
+    this.logger.info(`Initialized Dgraph Client`);
+  }
+
+  private createDgraphClientFromConfiguration(config: DgraphConfiguration): DgraphClient {
+    const dgraphClientSub = new dgraph.DgraphClientStub(
+      `${config.connectionUri}:${config.ports.grpc}`,
+      grpc.credentials.createInsecure(),
+    );
+    return new dgraph.DgraphClient(dgraphClientSub);
+  }
+
+  private async setDgraphSchema(schema: string): Promise<void> {
+    const operation = new Operation();
+    operation.setSchema(schema);
+    await this.dgraphClient!.alter(operation);
   }
 
   // Note on external ids in dgraph
