@@ -2,7 +2,7 @@
 
 Store data in your Solid Pod with a [Dgraph Database](https://dgraph.io/).
 
-###Disclaimer
+### Disclaimer
 
 The schema and queries within this repository are built with the assumption that your Dgraph instance uses a custom fork of Dgraph where the predicate list feature has been re-added. This is so that we can query for any arbitrary/dynamic predicate a node may have. An example can be found here: [unigraph-dev/dgraph](https://github.com/unigraph-dev/dgraph).
 
