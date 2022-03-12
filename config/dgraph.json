@@ -8,16 +8,16 @@
       "comment": "Stores data in a dgraph database. Only supports quad object streams.",
       "@id": "urn:solid-dgraph:default:DgraphDataAccessor",
       "@type": "DgraphDataAccessor",
-      "identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
-      "configFilePath": { "@id": "urn:solid-server:default:variable:dgraphConfig" }
+      "DgraphDataAccessor:_identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
+      "DgraphDataAccessor:_configFilePath": { "@id": "urn:solid-server:default:variable:dgraphConfig" }
     },
     {
       "comment": "A default store setup with a dgraph database backend.",
       "@id": "urn:solid-server:default:ResourceStore_Backend",
       "@type": "DataAccessorBasedStore",
-      "identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
-      "auxiliaryStrategy": { "@id": "urn:solid-server:default:AuxiliaryStrategy" },
-      "accessor": { "@id": "urn:solid-dgraph:default:DgraphDataAccessor" }
+      "DgraphDataAccessor:_identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
+      "DgraphDataAccessor:_auxiliaryStrategy": { "@id": "urn:solid-server:default:AuxiliaryStrategy" },
+      "DgraphDataAccessor:_accessor": { "@id": "urn:solid-dgraph:default:DgraphDataAccessor" }
     },
     {
       "comment": "This makes it so all incoming data is converted to quad objects.",
