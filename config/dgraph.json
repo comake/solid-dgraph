@@ -15,9 +15,9 @@
       "comment": "A default store setup with a dgraph database backend.",
       "@id": "urn:solid-server:default:ResourceStore_Backend",
       "@type": "DataAccessorBasedStore",
-      "DgraphDataAccessor:_identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
-      "DgraphDataAccessor:_auxiliaryStrategy": { "@id": "urn:solid-server:default:AuxiliaryStrategy" },
-      "DgraphDataAccessor:_accessor": { "@id": "urn:solid-dgraph:default:DgraphDataAccessor" }
+      "DataAccessorBasedStore:_identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
+      "DataAccessorBasedStore:_auxiliaryStrategy": { "@id": "urn:solid-server:default:AuxiliaryStrategy" },
+      "DataAccessorBasedStore:_accessor": { "@id": "urn:solid-dgraph:default:DgraphDataAccessor" }
     },
     {
       "comment": "This makes it so all incoming data is converted to quad objects.",
