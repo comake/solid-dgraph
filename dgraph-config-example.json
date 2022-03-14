@@ -1,0 +1,4 @@
+{
+  "connectionUri": "localhost",
+  "ports": { "grpc": "9080", "zero": "6080" }
+}
