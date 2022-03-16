@@ -48,7 +48,6 @@ npm ci
 ## TODO
 - [ ] Add option to create secure connection to Dgraph (i.e. instead of `grpc.credentials.createInsecure()`)
 
-
 ## License
 
 ©2022-present Comake, Inc., [MIT License](https://github.com/comake/solid-dgraph/blob/main/LICENSE)

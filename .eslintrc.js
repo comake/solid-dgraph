@@ -20,7 +20,7 @@ module.exports = {
     'plugin:import/typescript',
   ],
   rules: {
-    // Taken from https://github.com/comake/community-server/blob/main/.eslintrc.js
+    // Below taken from https://github.com/comake/community-server/blob/main/.eslintrc.js
     // There are valid typing reasons to have one or the other
     '@typescript-eslint/consistent-type-definitions': 'off',
     '@typescript-eslint/lines-between-class-members': [ 'error', { exceptAfterSingleLine: true }],
@@ -87,7 +87,7 @@ module.exports = {
       {
         selector: 'default',
         format: [ 'camelCase' ],
-        leadingUnderscore: 'forbid',
+        leadingUnderscore: 'allow',
         trailingUnderscore: 'forbid',
       },
       {

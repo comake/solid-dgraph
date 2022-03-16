@@ -36,7 +36,7 @@
     "build": "npm run build:ts && npm run build:components",
     "build:components": "componentsjs-generator -s src -c dist/components -i .componentsignore",
     "build:ts": "tsc",
-    "jest": "jest --coverageReporters text-summary --",
+    "jest": "jest --coverage",
     "lint": "eslint . --cache",
     "test": "npm run test:ts && npm run jest",
     "test:ts": "tsc -p test --noEmit",
@@ -52,8 +52,7 @@
     "@types/arrayify-stream": "^1.0.0",
     "arrayify-stream": "^1.0.0",
     "dgraph-js": "^21.3.1",
-    "n3": "^1.13.0",
-    "rdf-string-ttl": "^1.2.0"
+    "n3": "^1.13.0"
   },
   "peerDependencies": {
     "@solid/community-server": "^3.0.0"

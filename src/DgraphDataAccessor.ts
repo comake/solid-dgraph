@@ -22,14 +22,15 @@ import type {
 import arrayifyStream from 'arrayify-stream';
 import dgraph, { Operation } from 'dgraph-js';
 import type { DgraphClient } from 'dgraph-js';
-import { DataFactory } from 'n3';
-import type { Quad, Term } from 'rdf-js';
-import * as RdfString from 'rdf-string-ttl';
+import { DataFactory, Literal } from 'n3';
+import type { Quad, NamedNode } from 'rdf-js';
+import { DgraphUpsert } from './DgraphUpsert';
 import { NON_RDF_KEYS, MAX_TRANSACTION_RETRIES, DEFAULT_SCHEMA,
   INITIALIZATION_CHECK_PERIOD, MAX_INITIALIZATION_TIMEOUT_DURATION,
-  wait } from './DgraphUtil';
+  wait, literalDatatypeToPrimitivePredicate } from './DgraphUtil';
+import type { ValuePredicate } from './DgraphUtil';
 
-const { defaultGraph, namedNode } = DataFactory;
+const { defaultGraph, namedNode, quad } = DataFactory;
 
 export interface DgraphQuery {
   queryString: string;
@@ -41,6 +42,21 @@ export interface DgraphConfiguration {
   ports: { grpc: string; zero: string };
   schema?: string;
 }
+
+export type LiteralNodeKey = ValuePredicate | 'datatype' | 'language';
+export type DgraphLiteralNode = {
+  [key in LiteralNodeKey]?: string;
+};
+
+export type DgraphNamedNode = {
+  uid: string;
+  uri: string;
+  container?: string;
+  'dgraph.type'?: string;
+  [k: string]: undefined | string | DgraphNode | DgraphNode[];
+};
+
+export type DgraphNode = DgraphLiteralNode | DgraphNamedNode;
 
 /**
  * Stores all data and metadata of resources in a DGraph Database.
@@ -74,15 +90,17 @@ export class DgraphDataAccessor implements DataAccessor {
   * @param identifier - Identifier for which the data is requested.
   */
   public async getData(identifier: ResourceIdentifier): Promise<Guarded<Readable>> {
-    const responseJSON = await this.sendDgraphQuery({
+    const responseJSON = await this.transactDgraphQuery({
       queryString: `
         query data($identifier: string) {
-          entity as var(func: eq(uri, $identifier)) @filter(eq(dgraph.type, ["Entity", "MetadataEntity"]))
+          entity as var(func: eq(<uri>, $identifier)) @filter(eq(<dgraph.type>, "Entity"))
           data(func: has(container)) @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "EntityData")) {
-             expand(_userpredicate_)
+             expand(_userpredicate_) {
+               expand(_userpredicate_)
+             }
           }
         }`,
-      vars: { $identifier: RdfString.termToString(namedNode(identifier.path)) },
+      vars: { $identifier: identifier.path },
     });
     const quads = this.rdfQuadsFromJsonArray(responseJSON.data);
     return guardedStreamFrom(quads);
@@ -93,15 +111,17 @@ export class DgraphDataAccessor implements DataAccessor {
   * @param identifier - Identifier for which the metadata is requested.
   */
   public async getMetadata(identifier: ResourceIdentifier): Promise<RepresentationMetadata> {
-    const responseJSON = await this.sendDgraphQuery({
+    const responseJSON = await this.transactDgraphQuery({
       queryString: `
         query data($identifier: string) {
-          entity as var(func: eq(uri, $identifier)) @filter(eq(dgraph.type, ["Entity", "MetadataEntity"]))
+          entity as var(func: eq(<uri>, $identifier)) @filter(eq(<dgraph.type>, "Entity"))
           data(func: has(container)) @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata")) {
-             expand(_userpredicate_)
+             expand(_userpredicate_) {
+               expand(_userpredicate_)
+             }
           }
         }`,
-      vars: { $identifier: RdfString.termToString(namedNode(identifier.path)) },
+      vars: { $identifier: identifier.path },
     });
     const quads = this.rdfQuadsFromJsonArray(responseJSON.data);
 
@@ -130,15 +150,15 @@ export class DgraphDataAccessor implements DataAccessor {
   * @param identifier - Identifier of the parent container.
   */
   public async* getChildren(identifier: ResourceIdentifier): AsyncIterableIterator<RepresentationMetadata> {
-    const responseJSON = await this.sendDgraphQuery({
+    const responseJSON = await this.transactDgraphQuery({
       queryString: `
         query data($identifier: string) {
-          entity as var(func: eq(uri, $identifier)) @filter(eq(<dgraph.type>, "Entity"))
+          entity as var(func: eq(<uri>, $identifier)) @filter(eq(<dgraph.type>, "Entity"))
           data(func: eq(<dgraph.type>, "Entity")) @filter(uid_in(<container>, uid(entity))) {
             uri
           }
         }`,
-      vars: { $identifier: RdfString.termToString(namedNode(identifier.path)) },
+      vars: { $identifier: identifier.path },
     });
     for (const result of responseJSON.data) {
       yield new RepresentationMetadata(namedNode(result.uri));
@@ -194,147 +214,135 @@ export class DgraphDataAccessor implements DataAccessor {
     return await this.sendDgraphDelete(name, parent);
   }
 
-  private async sendDgraphDelete(name: string, parentName?: string): Promise<void> {
-    let query = `
-      query {
-        entity as var(func: eq(uri, "${this.toRdfString(name)}"))
-          @filter(eq(dgraph.type, "Entity"))`;
+  /**
+  * Creates an upsert query that deleted the data and metadata,
+  * and containment triple of a resource.
+  * @param name - URI of the resource to delete.
+  * @param parent - URI of the resource's container.
+  */
+  private async sendDgraphDelete(name: string, parent?: string): Promise<void> {
+    const dgraphUpsert = new DgraphUpsert();
+    const entityUidName = 'entity';
+    const parentUidName = 'parent';
+    const dataInEntityUidName = 'dataInEntity';
 
-    if (parentName) {
-      query += `
-        entityParent as var(func: eq(uri, "${this.toRdfString(parentName)}"))
-          @filter(eq(dgraph.type, "Entity"))`;
+    dgraphUpsert.addQuery(this.entityUidVarQuery(entityUidName, name));
+    dgraphUpsert.addQuery(`${dataInEntityUidName} as var(func: has(container))
+        @filter(uid_in(container, uid(${entityUidName})))`);
+    dgraphUpsert.addDelNquad(`uid(${entityUidName}) * * .`);
+    dgraphUpsert.addDelNquad(`uid(${dataInEntityUidName}) * * .`);
+    if (parent) {
+      dgraphUpsert.addQuery(this.entityUidVarQuery(parentUidName, parent));
+      dgraphUpsert.addDelNquad(`uid(${entityUidName}) <container> uid(${parentUidName}) .`);
     }
 
-    query += `
-        entitiesInName as var(func: has(container))
-          @filter(uid_in(container, uid(entity)))
-      }`;
-
-    // Delete all entities where metaname is the container
-    const deleteMutation = new dgraph.Mutation();
-    deleteMutation.setDelNquads(`
-      uid(entity) * * .
-      uid(entitiesInName) * * .
-      ${parentName ? `uid(entity) <container> uid(entityParent) .` : ''}
-    `);
-
-    const request = new dgraph.Request();
-    request.setQuery(query);
-    request.setMutationsList([ deleteMutation ]);
-    request.setCommitNow(true);
-    await this.transactDgraphRequest(request);
+    const deleteMutation = this.createMutation(dgraphUpsert.delNquads);
+    await this.createAndTransactDgraphRequest(dgraphUpsert.queries, [ deleteMutation ]);
   }
 
   /**
-   * Creates an upsert query that overwrites the data and metadata of a resource.
-   * If there are no triples we assume it's a container (so don't overwrite the main graph with containment triples).
-   * @param name - Name of the resource to update.
-   * @param metadata - New metadata of the resource.
-   * @param parentName - Name of the parent to update the containment triples.
-   * @param triples - New data of the resource.
-   */
+  * Creates an upsert query that overwrites the data and metadata of a resource.
+  * If there are no triples we assume it's a container (so don't overwrite the main graph with containment triples).
+  * @param name - URI of the resource to update.
+  * @param metadata - New metadata of the resource.
+  * @param parent - Name of the parent to update the containment triples.
+  * @param triples - New data of the resource.
+  */
   private async sendDgraphUpsert(name: string, metadata: RepresentationMetadata,
-    parentName?: string, triples?: Quad[]): Promise<void> {
-    const mutations: dgraph.Mutation[] = [];
+    parent?: string, triples?: Quad[]): Promise<void> {
+    const dgraphUpsert = new DgraphUpsert();
+    const entityUidName = 'entity';
+    dgraphUpsert.addQuery(this.entityUidVarQuery(entityUidName, name));
+    // Set entity's uri
+    dgraphUpsert.addSetNquad(`uid(${entityUidName}) <uri> "${name}" .`);
+    dgraphUpsert.addSetNquad(`uid(${entityUidName}) <dgraph.type> "Entity" .`);
+    // Replace entity metadata
+    this.replaceDataOfTypeInUidName(dgraphUpsert, metadata.quads(), entityUidName, 'Metadata');
 
-    let query = `
-      query {
-        entity as var(func: eq(uri, "${this.toRdfString(name)}"))
-          @filter(eq(dgraph.type, "Entity"))`;
-
-    if (parentName) {
-      query += `
-        entityParent as var(func: eq(uri, "${this.toRdfString(parentName)}"))
-          @filter(eq(dgraph.type, "Entity"))`;
+    if (parent) {
+      // Set the parent of this entity
+      const parentEntityUidName = 'parent';
+      dgraphUpsert.addQuery(this.entityUidVarQuery(parentEntityUidName, parent));
+      dgraphUpsert.addSetNquad(`uid(${parentEntityUidName}) <uri> "${parent}" .`);
+      dgraphUpsert.addSetNquad(`uid(${parentEntityUidName}) <dgraph.type> "Entity" .`);
+      dgraphUpsert.addSetNquad(`uid(${entityUidName}) <container> uid(${parentEntityUidName}) .`);
     }
 
     if (triples) {
-      query += `
-        entityDataInName as var(func: has(container))
-          @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "EntityData"))`;
+      // Replace entity data
+      this.replaceDataOfTypeInUidName(dgraphUpsert, triples, entityUidName, 'EntityData');
     }
 
-    query += `
-      entityMetaInName as var(func: has(container))
-        @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata"))
-    }`;
+    const mutation = this.createMutation(dgraphUpsert.delNquads, dgraphUpsert.setNquads);
+    await this.createAndTransactDgraphRequest(dgraphUpsert.queries, [ mutation ]);
+  }
 
-    // Delete all metadata
-    const deleteMetaMutation = new dgraph.Mutation();
-    deleteMetaMutation.setDelNquads('uid(entityMetaInName) * * .');
-    mutations.push(deleteMetaMutation);
+  private replaceDataOfTypeInUidName(dgraphUpsert: DgraphUpsert, quads: Quad[],
+    entityUidName: string, dgraphType: string): void {
+    // Delete all old data in this entity
+    dgraphUpsert.addQuery(this.dataOfTypeInEntityQuery(entityUidName, dgraphType));
+    dgraphUpsert.addDelNquad(`uid(${entityUidName}${dgraphType}) * * .`);
+    // Insert new data in this entity
+    this.setNQuadsAndQueriesForQuadsBySubjectInContainer(dgraphUpsert, quads, entityUidName, dgraphType);
+  }
 
-    const setNQuads: string[] = [];
-    // Make sure the parent's uri is set
-    if (parentName) {
-      setNQuads.push(`uid(entityParent) <uri> "${this.toRdfString(parentName)}" .`);
-      setNQuads.push(`uid(entityParent) <dgraph.type> "Entity" .`);
-    }
-    // Make sure this entity's uri is set
-    setNQuads.push(`uid(entity) <uri> "${this.toRdfString(name)}" .`);
-    setNQuads.push(`uid(entity) <dgraph.type> "Entity" .`);
-    // Create entities from metadata where metaName is the container
-    const metadataQuadsGroupedBySubject = this.groupQuadsBySubject(metadata.quads());
+  private setNQuadsAndQueriesForQuadsBySubjectInContainer(dgraphUpsert: DgraphUpsert, quads: Quad[],
+    containerUidName: string, dgraphType: string): void {
+    const metadataQuadsGroupedBySubject = this.groupQuadsBySubject(quads);
     Object.values(metadataQuadsGroupedBySubject)
-      .forEach((quads, i): void => {
-        setNQuads.push(`_:m${i} <uri> "${RdfString.termToString(quads[0].subject)}" .`);
-        setNQuads.push(`_:m${i} <container> uid(entity) .`);
-        setNQuads.push(`_:m${i} <dgraph.type> "Metadata" .`);
-        quads.forEach((quad): void => {
-          setNQuads.push(
-            `_:m${i} ${RdfString.termToString(quad.predicate)} "${this.termToEscapedString(quad.object)}" .`,
-          );
+      .forEach((quadsWithSameSubject, i): void => {
+        const blankNodeName = `${dgraphType}${i}`;
+        dgraphUpsert.addSetNquad(`_:${blankNodeName} <uri> "${quadsWithSameSubject[0].subject.value}" .`);
+        dgraphUpsert.addSetNquad(`_:${blankNodeName} <container> uid(${containerUidName}) .`);
+        dgraphUpsert.addSetNquad(`_:${blankNodeName} <dgraph.type> "${dgraphType}" .`);
+        quadsWithSameSubject.forEach((rdfQuad, j): void => {
+          const uidVar = `${blankNodeName}${j}`;
+          if (rdfQuad.object.termType === 'Literal') {
+            const key = literalDatatypeToPrimitivePredicate(rdfQuad.object.datatype.value);
+            // eslint-disable-next-line no-useless-escape
+            const value = rdfQuad.object.value.replace(/"/gu, '\\\"');
+            dgraphUpsert.addQuery(`${uidVar} as var(func: eq(<${key}>, "${value}"))
+              @filter(eq(<language>, "${rdfQuad.object.language}") and
+                eq(<datatype>, "${rdfQuad.object.datatype.value}"))`);
+            dgraphUpsert.addSetNquad(`_:${blankNodeName} <${rdfQuad.predicate.value}> uid(${uidVar}) .`);
+            dgraphUpsert.addSetNquad(`uid(${uidVar}) <${key}> "${value}" .`);
+            dgraphUpsert.addSetNquad(`uid(${uidVar}) <language> "${rdfQuad.object.language}" .`);
+            dgraphUpsert.addSetNquad(`uid(${uidVar}) <datatype> "${rdfQuad.object.datatype.value}" .`);
+          } else if (rdfQuad.object.termType === 'NamedNode') {
+            dgraphUpsert.addQuery(this.entityUidVarQuery(uidVar, rdfQuad.object.value));
+            dgraphUpsert.addSetNquad(`_:${blankNodeName} <${rdfQuad.predicate.value}> uid(${uidVar}) .`);
+            dgraphUpsert.addSetNquad(`uid(${uidVar}) <uri> "${rdfQuad.object.value}" .`);
+            dgraphUpsert.addSetNquad(`uid(${uidVar}) <dgraph.type> "Entity" .`);
+          }
         });
       });
+  }
 
-    // Set the parent of this entity
-    if (parentName) {
-      setNQuads.push(`uid(entity) <container> uid(entityParent) .`);
-    }
+  private entityUidVarQuery(uidName: string, uri: string): string {
+    return `${uidName} as var(func: eq(<uri>, "${uri}"))
+        @filter(eq(<dgraph.type>, "Entity"))`;
+  }
 
-    // Create entity from triples where name is the container
-    if (triples) {
-      // Delete all entities where name is the container
-      const deleteMutation = new dgraph.Mutation();
-      deleteMutation.setDelNquads('uid(entityDataInName) * * .');
-      mutations.push(deleteMutation);
+  private dataOfTypeInEntityQuery(entityUidName: string, dgraphType: string): string {
+    return `${entityUidName}${dgraphType} as var(func: has(container))
+      @filter(uid_in(container, uid(${entityUidName})) and eq(<dgraph.type>, "${dgraphType}"))`;
+  }
 
-      const tripleQuadsGroupedBySubject = this.groupQuadsBySubject(triples);
-      Object.values(tripleQuadsGroupedBySubject)
-        .forEach((quads, i): void => {
-          setNQuads.push(`_:n${i} <uri> "${RdfString.termToString(quads[0].subject)}" .`);
-          setNQuads.push(`_:n${i} <container> uid(entity) .`);
-          setNQuads.push(`_:n${i} <dgraph.type> "EntityData" .`);
-          quads.forEach((quad): void => {
-            setNQuads.push(
-              `_:n${i} ${RdfString.termToString(quad.predicate)} "${this.termToEscapedString(quad.object)}" .`,
-            );
-          });
-        });
-    }
-
-    const insertMutation = new dgraph.Mutation();
-    insertMutation.setSetNquads(setNQuads.join('\n'));
-    mutations.push(insertMutation);
-
+  private async createAndTransactDgraphRequest(queries: string[], mutations: dgraph.Mutation[]): Promise<void> {
     const request = new dgraph.Request();
+    const query = `query { ${queries.join('\n')} }`;
     request.setQuery(query);
     request.setMutationsList(mutations);
     request.setCommitNow(true);
-    await this.transactDgraphRequest(request);
-  }
-
-  private async transactDgraphRequest(request: dgraph.Request): Promise<void> {
-    return this.createAndPerformDatabaseTransaction(
+    await this.performBlockWithTransaction(
       async(transaction: dgraph.Txn): Promise<void> => {
         await transaction.doRequest(request);
       },
     );
   }
 
-  private async sendDgraphQuery(query: DgraphQuery): Promise<any> {
-    return this.createAndPerformDatabaseTransaction(
+  private async transactDgraphQuery(query: DgraphQuery): Promise<any> {
+    return this.performBlockWithTransaction(
       async(transaction: dgraph.Txn): Promise<any> => {
         const response = await transaction.queryWithVars(query.queryString, query.vars);
         return response.getJson();
@@ -342,7 +350,7 @@ export class DgraphDataAccessor implements DataAccessor {
     );
   }
 
-  private async createAndPerformDatabaseTransaction<T>(
+  private async performBlockWithTransaction<T>(
     transactionBlock: (transaction: dgraph.Txn) => Promise<T>,
     tries = 1,
   ): Promise<T> {
@@ -357,7 +365,7 @@ export class DgraphDataAccessor implements DataAccessor {
       return await transactionBlock(transaction);
     } catch (error: unknown) {
       if (error === dgraph.ERR_ABORTED && tries < MAX_TRANSACTION_RETRIES) {
-        return await this.createAndPerformDatabaseTransaction(transactionBlock, tries + 1);
+        return await this.performBlockWithTransaction(transactionBlock, tries + 1);
       }
       throw error;
     } finally {
@@ -404,51 +412,44 @@ export class DgraphDataAccessor implements DataAccessor {
     await this.dgraphClient!.alter(operation);
   }
 
-  // Note on external ids in dgraph
-  // https://dgraph.io/docs/mutations/external-ids/
-  // https://dgraph.io/docs/mutations/external-ids-upsert-block/
-  private rdfQuadsFromJsonArray(json: any[], parentSubject?: string, parentPredicate?: string): Quad[] {
-    return json.reduce((rdf, entity): Quad[] => {
-      const entityIsObject = typeof entity === 'object';
-      if (!entityIsObject && parentSubject && parentPredicate) {
-        rdf.push(RdfString.stringQuadToQuad({
-          subject: parentSubject,
-          predicate: this.toRdfString(parentPredicate),
-          object: entity,
-          graph: '',
-        }));
-      } else if (entityIsObject && parentSubject && parentPredicate && entity.uri) {
-        rdf.push(RdfString.stringQuadToQuad({
-          subject: parentSubject,
-          predicate: this.toRdfString(parentPredicate),
-          object: entity.uri,
-          graph: '',
-        }));
-      } else if (entityIsObject && entity.uri) {
-        const kv = Object.entries(entity);
-        kv.forEach(([ key, value ]: any[]): void => {
-          if (Array.isArray(value) && key !== 'dgraph.type') {
-            rdf = [ ...rdf, ...this.rdfQuadsFromJsonArray(value, entity.uri, key) ];
-          } else if (typeof value === 'object') {
-            rdf = [ ...rdf, ...this.rdfQuadsFromJsonArray([ value ], entity.uri, key) ];
-          } else if (!NON_RDF_KEYS.has(key)) {
-            rdf.push(RdfString.stringQuadToQuad({
-              subject: entity.uri,
-              predicate: this.toRdfString(key),
-              object: value,
-              graph: '',
-            }));
-          }
-        });
+  private rdfQuadsFromJsonArray(json: DgraphNode[], parent?: string, predicate?: string): Quad[] {
+    return json.reduce((rdf: Quad[], entity: DgraphNode): Quad[] => {
+      if (parent && predicate) {
+        rdf.push(quad(namedNode(parent), namedNode(predicate), this.dgraphNodeToTerm(entity)));
+      } else if ('uri' in entity) {
+        Object.keys(entity)
+          .filter((key): boolean => !NON_RDF_KEYS.has(key))
+          .forEach((rdfPredicate): void => {
+            const object = entity[rdfPredicate];
+            if (Array.isArray(object)) {
+              rdf = [ ...rdf, ...this.rdfQuadsFromJsonArray(object, entity.uri, rdfPredicate) ];
+            } else if (typeof object === 'object') {
+              rdf = [ ...rdf, ...this.rdfQuadsFromJsonArray([ object ], entity.uri, rdfPredicate) ];
+            }
+          });
       }
       return rdf;
     }, []);
   }
 
+  private dgraphNodeToTerm(entity: DgraphNode): NamedNode | Literal {
+    return 'uri' in entity ? namedNode(entity.uri) : this.dgraphNodeToLiteral(entity);
+  }
+
+  private dgraphNodeToLiteral(literalNode: DgraphLiteralNode): Literal {
+    const valueKey = Object.keys(literalNode).find((key): boolean => key.startsWith('_value')) as ValuePredicate;
+    const isNonString = literalNode.datatype &&
+      literalNode.datatype !== 'http://www.w3.org/2001/XMLSchema#string' &&
+      literalNode.datatype !== 'http://www.w3.org/1999/02/22-rdf-syntax-ns#langString';
+    const datatypePart = isNonString ? `^^${literalNode.datatype}` : '';
+    const languagePart = literalNode.language ? `@${literalNode.language}` : '';
+    return new Literal(`"${literalNode[valueKey]}"${datatypePart}${languagePart}`);
+  }
+
   /**
-   * Helper function to get named nodes corresponding to the identifier and its parent container.
-   * In case of a root container only the name will be returned.
-   */
+  * Helper function to get named nodes corresponding to the identifier and its parent container.
+  * In case of a root container only the name will be returned.
+  */
   private getRelatedNames(identifier: ResourceIdentifier): { name: string; parent?: string } {
     const name = identifier.path;
 
@@ -463,20 +464,23 @@ export class DgraphDataAccessor implements DataAccessor {
   }
 
   private groupQuadsBySubject(quads: Quad[]): Record<string, Quad[]> {
-    return quads.reduce((obj: Record<string, Quad[]>, quad): Record<string, Quad[]> => {
-      if (!obj[quad.subject.value]) {
-        obj[quad.subject.value] = [];
+    return quads.reduce((obj: Record<string, Quad[]>, rdfQuad): Record<string, Quad[]> => {
+      if (!obj[rdfQuad.subject.value]) {
+        obj[rdfQuad.subject.value] = [];
       }
-      obj[quad.subject.value].push(quad);
+      obj[rdfQuad.subject.value].push(rdfQuad);
       return obj;
     }, {});
   }
 
-  private toRdfString(identifier: string): string {
-    return RdfString.termToString(namedNode(identifier));
-  }
-
-  private termToEscapedString(term: Term): string {
-    return RdfString.termToString(term).replace(/"/gu, '\\"');
+  private createMutation(delNquads: string[], setNquads: string[] = []): dgraph.Mutation {
+    const mutation = new dgraph.Mutation();
+    if (setNquads.length > 0) {
+      mutation.setSetNquads(setNquads.join('\n'));
+    }
+    if (delNquads.length > 0) {
+      mutation.setDelNquads(delNquads.join('\n'));
+    }
+    return mutation;
   }
 }
