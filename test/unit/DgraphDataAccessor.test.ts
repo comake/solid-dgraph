@@ -48,7 +48,7 @@ function simplifyQuery(query: string | string[]): string {
 
 describe('A DgraphDataAccessor', (): void => {
   const base = 'http://test.com/';
-  const configFilePath = './dgraph-config.json';
+  const configFilePath = './config/dgraph.json';
   const identifierStrategy = new SingleRootIdentifierStrategy(base);
   let accessor: DgraphDataAccessor;
   let metadata: RepresentationMetadata;

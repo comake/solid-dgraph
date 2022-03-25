@@ -9,7 +9,7 @@
       "@id": "urn:solid-dgraph:default:DgraphDataAccessor",
       "@type": "DgraphDataAccessor",
       "DgraphDataAccessor:_identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
-      "DgraphDataAccessor:_configFilePath": "./dgraph-config.json"
+      "DgraphDataAccessor:_configFilePath": "./config/dgraph.json"
     },
     {
       "comment": "A default store setup with a dgraph database backend.",
