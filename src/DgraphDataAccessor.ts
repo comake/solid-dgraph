@@ -1,4 +1,3 @@
-import { promises as fsPromises } from 'fs';
 import type { Readable } from 'stream';
 import * as grpc from '@grpc/grpc-js';
 import {
@@ -24,6 +23,7 @@ import dgraph, { Operation } from 'dgraph-js';
 import type { DgraphClient } from 'dgraph-js';
 import { DataFactory, Literal } from 'n3';
 import type { Quad, NamedNode } from 'rdf-js';
+import type { DgraphConfiguration } from './DgraphConfiguration';
 import { DgraphUpsert } from './DgraphUpsert';
 import { NON_RDF_KEYS, MAX_TRANSACTION_RETRIES, DEFAULT_SCHEMA,
   INITIALIZATION_CHECK_PERIOD, MAX_INITIALIZATION_TIMEOUT_DURATION,
@@ -35,12 +35,6 @@ const { defaultGraph, namedNode, quad } = DataFactory;
 export interface DgraphQuery {
   queryString: string;
   vars: any;
-}
-
-export interface DgraphConfiguration {
-  connectionUri: string;
-  ports: { grpc: string; zero: string };
-  schema?: string;
 }
 
 export type LiteralNodeKey = ValuePredicate | 'datatype' | 'language';
@@ -67,11 +61,11 @@ export class DgraphDataAccessor implements DataAccessor {
   private databaseInitialized = false;
   private initializingDatabase = false;
   private dgraphClient?: DgraphClient;
-  private readonly configFilePath: string;
+  private readonly connectionConfiguration: DgraphConfiguration;
   private readonly identifierStrategy: IdentifierStrategy;
 
-  public constructor(configFilePath: string, identifierStrategy: IdentifierStrategy) {
-    this.configFilePath = configFilePath;
+  public constructor(connectionConfiguration: DgraphConfiguration, identifierStrategy: IdentifierStrategy) {
+    this.connectionConfiguration = connectionConfiguration;
     this.identifierStrategy = identifierStrategy;
   }
 
@@ -387,11 +381,8 @@ export class DgraphDataAccessor implements DataAccessor {
     this.initializingDatabase = true;
     this.logger.info(`Initializing Dgraph Client`);
 
-    const configText = await fsPromises.readFile(this.configFilePath, 'utf8');
-    const configuration: DgraphConfiguration = JSON.parse(configText);
-    this.dgraphClient = this.createDgraphClientFromConfiguration(configuration);
-
-    await this.setDgraphSchema(configuration.schema ?? DEFAULT_SCHEMA);
+    this.dgraphClient = this.createDgraphClientFromConfiguration(this.connectionConfiguration);
+    await this.setDgraphSchema(this.connectionConfiguration.schema ?? DEFAULT_SCHEMA);
 
     this.databaseInitialized = true;
     this.initializingDatabase = false;
@@ -400,7 +391,7 @@ export class DgraphDataAccessor implements DataAccessor {
 
   private createDgraphClientFromConfiguration(config: DgraphConfiguration): DgraphClient {
     const dgraphClientSub = new dgraph.DgraphClientStub(
-      `${config.connectionUri}:${config.ports.grpc}`,
+      `${config.connectionUri}:${config.grpcPort}`,
       grpc.credentials.createInsecure(),
     );
     return new dgraph.DgraphClient(dgraphClientSub);
