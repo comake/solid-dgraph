@@ -20,7 +20,7 @@ npm install @solid/community-server@v3.0.0 @comake/solid-dgraph
 #### Configure
 In your `my-server` folder (or whatever the name of your project is):
 1. Create a `config.json` file from [this template](https://github.com/comake/solid-dgraph/blob/main/config-example.json), and fill out your settings. The only important change to make to the [default config from Community Solid Server](https://github.com/CommunitySolidServer/CommunitySolidServer/blob/main/config/default.json) is to change the line which uses `files-scs:config/storage/backend/*.json` to  `files-csd:config/dgraph.json`.
-2. Create a `dgraph-config.json` file from [this template](https://github.com/comake/solid-dgraph/blob/main/dgraph-config-example.json), and fill out your settings. This file should be a JSON object with keys `connectionUri` and `ports`. It may optionally have a `schema` key if you'd like to override the default schema found [here](https://github.com/comake/solid-dgraph/blob/main/src/DgraphUtil.ts#L5).
+2. Create a `/config/dgraph.json` file from [this template](https://github.com/comake/solid-dgraph/blob/main/dgraph-config-example.json), and fill out your settings. This file should be a JSON object with keys `connectionUri` and `ports`. It may optionally have a `schema` key if you'd like to override the default schema found [here](https://github.com/comake/solid-dgraph/blob/main/src/DgraphUtil.ts#L5).
 
 #### Run
 Execute the following command:
