@@ -8,7 +8,6 @@ import { BasicRepresentation, RepresentationMetadata, NotFoundHttpError,
 import arrayifyStream from 'arrayify-stream';
 import dgraph from 'dgraph-js';
 import { DataFactory, Literal } from 'n3';
-import { DgraphConfiguration } from '../../src/DgraphConfiguration';
 import { DgraphDataAccessor } from '../../src/DgraphDataAccessor';
 import * as DgraphUtil from '../../src/DgraphUtil';
 
@@ -129,8 +128,7 @@ describe('A DgraphDataAccessor', (): void => {
 
   describe('with input schema', (): void => {
     beforeEach(async(): Promise<void> => {
-      const configuration = new DgraphConfiguration(CONFIG_WITH_SCHEMA);
-      accessor = new DgraphDataAccessor(configuration, identifierStrategy);
+      accessor = new DgraphDataAccessor(identifierStrategy, CONFIG_WITH_SCHEMA);
     });
 
     it('sets the DgraphClient schema using input schema.', async(): Promise<void> => {
@@ -143,8 +141,7 @@ describe('A DgraphDataAccessor', (): void => {
 
   describe('without input schema', (): void => {
     beforeEach(async(): Promise<void> => {
-      const configuration = new DgraphConfiguration(CONFIG_WITHOUT_SCHEMA);
-      accessor = new DgraphDataAccessor(configuration, identifierStrategy);
+      accessor = new DgraphDataAccessor(identifierStrategy, CONFIG_WITHOUT_SCHEMA);
     });
 
     it('sets the DgraphClient schema using the default schema.', async(): Promise<void> => {
@@ -154,7 +151,7 @@ describe('A DgraphDataAccessor', (): void => {
       expect(setSchema).toHaveBeenCalledWith(DgraphUtil.DEFAULT_SCHEMA);
     });
 
-    it('errors when the database fails to initialize within the max initialization timeout.', async():
+    it('errors during a query when the database fails to initialize within the max initialization timeout.', async():
     Promise<void> => {
       jest.useFakeTimers();
       jest.mock('../../src/DgraphUtil');
@@ -472,6 +469,36 @@ describe('A DgraphDataAccessor', (): void => {
         `uid(Metadata01) <uri> "${LDP.terms.Container.value}" .`,
         `uid(Metadata01) <dgraph.type> "Entity" .`,
       ]));
+    });
+
+    it('errors during an upsert when the database fails to initialize within the max initialization timeout.', async():
+    Promise<void> => {
+      jest.useFakeTimers();
+      jest.mock('../../src/DgraphUtil');
+      const mockDgraphUtil = DgraphUtil as jest.Mocked<typeof DgraphUtil>;
+      (mockDgraphUtil.MAX_INITIALIZATION_TIMEOUT_DURATION as unknown) = 0;
+
+      // Make the schema alter operation take a long time
+      alter.mockImplementation(
+        async(): Promise<void> => new Promise((resolve): void => {
+          setTimeout(resolve, 1000);
+        }),
+      );
+
+      metadata = new RepresentationMetadata(
+        { path: 'http://test.com/container/' },
+        { [RDF.type]: [ LDP.terms.Resource, LDP.terms.Container ]},
+      );
+      // Send a first request which will start initialization of database
+      accessor.writeContainer({ path: 'http://test.com/container/' }, metadata).catch((): void => {
+        // Do nothing
+      });
+      // Send a second request which should fail after waiting MAX_INITIALIZATION_TIMEOUT_DURATION
+      const promise = accessor.writeContainer({ path: 'http://test.com/container/' }, metadata);
+      jest.advanceTimersByTime(DgraphUtil.INITIALIZATION_CHECK_PERIOD);
+      await expect(promise).rejects.toThrow('Failed to initialize Dgraph database.');
+      jest.runAllTimers();
+      jest.useRealTimers();
     });
 
     it('overwrites the data and metadata when writing a resource and updates parent.', async(): Promise<void> => {

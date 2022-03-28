@@ -37,11 +37,10 @@
   ],
   "@graph": [
     {
-      "@id": "urn:solid-dgraph:default:DgraphConfiguration",
+      "@id": "urn:solid-dgraph:default:DgraphDataAccessor",
       "comment": "The configuration to connect to the Dgraph instance.",
-      "@type": "DgraphConfiguration",
-      "DgraphConfiguration:_args_connectionUri": "localhost",
-      "DgraphConfiguration:_args_grpcPort": "9080",
+      "DgraphDataAccessor:_configuration_connectionUri": "localhost",
+      "DgraphDataAccessor:_configuration_grpcPort": "9080",
     }
   ]
 }
