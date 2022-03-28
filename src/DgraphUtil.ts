@@ -35,6 +35,12 @@ export enum ValuePredicate {
   float = '_value.#',
 }
 
+export interface DgraphConfiguration {
+  connectionUri: string;
+  grpcPort: string;
+  schema?: string;
+}
+
 export function literalDatatypeToPrimitivePredicate(datatype: string): ValuePredicate {
   switch (datatype) {
     case 'http://www.w3.org/2001/XMLSchema#dateTime':

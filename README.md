@@ -19,8 +19,19 @@ npm install @solid/community-server@v3.0.0 @comake/solid-dgraph
 
 #### Configure
 In your `my-server` folder (or whatever the name of your project is):
-1. Create a `config.json` file from [this template](https://github.com/comake/solid-dgraph/blob/main/config-example.json), and fill out your settings. The only important change to make to the [default config from Community Solid Server](https://github.com/CommunitySolidServer/CommunitySolidServer/blob/main/config/default.json) is to change the line which uses `files-scs:config/storage/backend/*.json` to  `files-csd:config/dgraph.json`.
-2. Create a `dgraph.json` file inside the `config` folder of your project from [this template](https://github.com/comake/solid-dgraph/blob/main/dgraph-config-example.json), and fill out your settings. This file should be a JSON object with keys `connectionUri` and `ports`. It may optionally have a `schema` key if you'd like to override the default schema found [here](https://github.com/comake/solid-dgraph/blob/main/src/DgraphUtil.ts#L5).
+
+Create a `config.json` file from [this template](https://github.com/comake/solid-dgraph/blob/main/config-example.json), and fill out your settings. The only important change to make to the [default config from Community Solid Server](https://github.com/CommunitySolidServer/CommunitySolidServer/blob/main/config/default.json) is to change the line which uses `files-scs:config/storage/backend/*.json` to  `files-csd:config/dgraph.json`
+
+Optionally, you can change the connection settings for your Dgraph database by adding parameters to the `DgraphDataAccessor` in the `@graph` section such as:
+```json
+{
+  "@id": "urn:solid-dgraph:default:DgraphDataAccessor",
+  "comment": "The configuration to connect to the Dgraph instance.",
+  "DgraphDataAccessor:_configuration_connectionUri": "https://mySpecialConnectionUri",
+  "DgraphDataAccessor:_configuration_grpcPort": "1234",
+}
+```
+If you do not include this section, `connectionUri` defaults to `localhost` and `grpcPort` defaults to `9080`, which are the Dgraph defaults.
 
 #### Run
 Execute the following command:
@@ -47,6 +58,7 @@ npm ci
 
 ## TODO
 - [ ] Add option to create secure connection to Dgraph (i.e. instead of `grpc.credentials.createInsecure()`)
+- [ ] Integration tests
 
 ## License
 

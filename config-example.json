@@ -36,5 +36,11 @@
     "files-scs:config/util/variables/default.json"
   ],
   "@graph": [
+    {
+      "@id": "urn:solid-dgraph:default:DgraphDataAccessor",
+      "comment": "The configuration to connect to the Dgraph instance.",
+      "DgraphDataAccessor:_configuration_connectionUri": "localhost",
+      "DgraphDataAccessor:_configuration_grpcPort": "9080",
+    }
   ]
 }

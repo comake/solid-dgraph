@@ -8,8 +8,7 @@
       "comment": "Stores data in a dgraph database. Only supports quad object streams.",
       "@id": "urn:solid-dgraph:default:DgraphDataAccessor",
       "@type": "DgraphDataAccessor",
-      "DgraphDataAccessor:_identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
-      "DgraphDataAccessor:_configFilePath": "./config/dgraph.json"
+      "DgraphDataAccessor:_identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" }
     },
     {
       "comment": "A default store setup with a dgraph database backend.",
