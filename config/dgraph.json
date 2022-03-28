@@ -1,6 +1,6 @@
 {
   "@context": [
-    "https://linkedsoftwaredependencies.org/bundles/npm/@comake/solid-dgraph/^1.0.0/components/context.jsonld",
+    "https://linkedsoftwaredependencies.org/bundles/npm/@comake/solid-dgraph/^2.0.0/components/context.jsonld",
     "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^3.0.0/components/context.jsonld",
   ],
   "@graph": [
