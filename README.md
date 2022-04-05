@@ -57,6 +57,7 @@ npm ci
 ```
 
 ## TODO
+- [ ] Add separate unit tests for DgraphClient.ts and mock it in the tests for DgraphDataAccessor
 - [ ] Add option to create secure connection to Dgraph (i.e. instead of `grpc.credentials.createInsecure()`)
 - [ ] Integration tests
 
