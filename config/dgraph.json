@@ -5,13 +5,13 @@
   ],
   "@graph": [
     {
-      "comment": "Stores data in a dgraph database. Only supports quad object streams.",
+      "comment": "Stores data in a Dgraph database. Only supports quad object streams.",
       "@id": "urn:solid-dgraph:default:DgraphDataAccessor",
       "@type": "DgraphDataAccessor",
       "DgraphDataAccessor:_identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" }
     },
     {
-      "comment": "A default store setup with a dgraph database backend.",
+      "comment": "A default store setup with a Dgraph database backend.",
       "@id": "urn:solid-server:default:ResourceStore_Backend",
       "@type": "DataAccessorBasedStore",
       "DataAccessorBasedStore:_identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },

@@ -53,7 +53,7 @@ export interface DgraphConfigurationArgs {
   schema?: string;
 }
 
-const defaultConfiguration = {
+export const defaultConfiguration = {
   connectionUri: 'localhost',
   grpcPort: '9080',
 };
@@ -67,7 +67,7 @@ export class DgraphDataAccessor implements DataAccessor {
   protected readonly logger = getLoggerFor(this);
 
   private clientInitialized = false;
-  private initializingDatabase = false;
+  private initializingClient = false;
   private dgraphClient?: DgraphClient;
   private readonly configuration: DgraphConfiguration;
   private readonly identifierStrategy: IdentifierStrategy;
@@ -180,6 +180,7 @@ export class DgraphDataAccessor implements DataAccessor {
 
     const triples = await arrayifyStream(data) as Quad[];
     const def = defaultGraph();
+
     if (triples.some((triple): boolean => !def.equals(triple.graph))) {
       throw new NotImplementedHttpError('Only triples in the default graph are supported.');
     }
@@ -330,39 +331,33 @@ export class DgraphDataAccessor implements DataAccessor {
 
   private async sendDgraphClientUpsert(upsert: DgraphUpsert): Promise<void> {
     await this.ensureClientIsInitialized();
-    if (!this.clientInitialized) {
-      throw new Error('Failed to initialize Dgraph database.');
-    }
-
     await this.dgraphClient!.sendDgraphUpsert(upsert.queries, upsert.delNquads, upsert.setNquads);
   }
 
   private async sendDgraphClientQuery(query: DgraphQuery): Promise<any> {
     await this.ensureClientIsInitialized();
-    if (!this.clientInitialized) {
-      throw new Error('Failed to initialize Dgraph database.');
-    }
-
     return this.dgraphClient!.sendDgraphQuery(query.queryString, query.vars);
   }
 
   private async ensureClientIsInitialized(waitTime = 0): Promise<void> {
-    if (!this.clientInitialized && !this.initializingDatabase) {
-      await this.initializeDatabase();
-    } else if (!this.clientInitialized && this.initializingDatabase &&
+    if (!this.clientInitialized && !this.initializingClient) {
+      await this.initializeClient();
+    } else if (!this.clientInitialized && this.initializingClient &&
       waitTime <= MAX_INITIALIZATION_TIMEOUT_DURATION) {
       await wait(INITIALIZATION_CHECK_PERIOD);
       await this.ensureClientIsInitialized(waitTime + INITIALIZATION_CHECK_PERIOD);
+    } else if (!this.clientInitialized) {
+      throw new Error('Failed to initialize Dgraph database.');
     }
   }
 
-  private async initializeDatabase(): Promise<void> {
-    this.initializingDatabase = true;
+  private async initializeClient(): Promise<void> {
+    this.initializingClient = true;
     this.logger.info(`Initializing Dgraph Client`);
     this.dgraphClient = new DgraphClient(this.configuration);
     await this.dgraphClient.setSchema(this.configuration.schema ?? DEFAULT_SCHEMA);
     this.clientInitialized = true;
-    this.initializingDatabase = false;
+    this.initializingClient = false;
     this.logger.info(`Initialized Dgraph Client`);
   }
 
