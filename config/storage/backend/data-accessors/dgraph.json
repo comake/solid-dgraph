@@ -1,0 +1,14 @@
+{
+  "@context": [
+    "https://linkedsoftwaredependencies.org/bundles/npm/@comake/solid-dgraph/^2.0.0/components/context.jsonld",
+    "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^4.0.0/components/context.jsonld",
+  ],
+  "@graph": [
+    {
+      "comment": "Stores data in a Dgraph database. Only supports quad object streams.",
+      "@id": "urn:solid-dgraph:default:DgraphDataAccessor",
+      "@type": "DgraphDataAccessor",
+      "DgraphDataAccessor:_identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" }
+    }
+  ]
+}

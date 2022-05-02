@@ -186,7 +186,7 @@ export class DgraphDataAccessor implements DataAccessor {
     }
 
     // Not relevant since all content is triples
-    metadata.removeAll(CONTENT_TYPE);
+    metadata.removeAll(namedNode(CONTENT_TYPE));
 
     return await this.sendDgraphUpsert(name, metadata, parent, triples);
   }

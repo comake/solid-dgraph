@@ -180,7 +180,7 @@ describe('A DgraphDataAccessor', (): void => {
     it('can only handle quad data.', async(): Promise<void> => {
       let representation = new BasicRepresentation(data, metadata, true);
       await expect(accessor.canHandle(representation)).rejects.toThrow(UnsupportedMediaTypeHttpError);
-      representation = new BasicRepresentation(data, 'newInternalType', false);
+      representation = new BasicRepresentation(data, 'new/internalType', false);
       await expect(accessor.canHandle(representation)).rejects.toThrow(UnsupportedMediaTypeHttpError);
       representation = new BasicRepresentation(data, INTERNAL_QUADS, false);
       metadata.contentType = INTERNAL_QUADS;
