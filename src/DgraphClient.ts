@@ -1,12 +1,9 @@
 import * as grpc from '@grpc/grpc-js';
-import { getLoggerFor } from '@solid/community-server';
 import dgraph, { Operation } from 'dgraph-js';
-import { wait, MAX_TRANSACTION_RETRIES, MAX_SCHEMA_ALTER_TIMEOUT_DURATION,
-  SCHEMA_ALTER_ATTEMPT_PERIOD } from './DgraphUtil';
+import { MAX_TRANSACTION_RETRIES } from './DgraphUtil';
 import type { DgraphConfiguration } from './DgraphUtil';
 
 export class DgraphClient {
-  protected readonly logger = getLoggerFor(this);
   private readonly dgraphClient: dgraph.DgraphClient;
 
   public constructor(configuration: DgraphConfiguration) {
@@ -21,22 +18,7 @@ export class DgraphClient {
   public async setSchema(schema: string): Promise<void> {
     const operation = new Operation();
     operation.setSchema(schema);
-    await this.performAlterOperation(operation);
-  }
-
-  private async performAlterOperation(operation: Operation, waitTime = 0): Promise<void> {
-    try {
-      await this.dgraphClient.alter(operation);
-    } catch (error: unknown) {
-      if (waitTime <= MAX_SCHEMA_ALTER_TIMEOUT_DURATION) {
-        this.logger.info('Retrying Dgraph schema alteration after failure.');
-        await wait(SCHEMA_ALTER_ATTEMPT_PERIOD);
-        return await this.performAlterOperation(operation, waitTime + SCHEMA_ALTER_ATTEMPT_PERIOD);
-      }
-
-      this.logger.info(`Failed to alter Dgraph schema after ${MAX_SCHEMA_ALTER_TIMEOUT_DURATION / 1000} seconds.`);
-      throw error;
-    }
+    await this.dgraphClient.alter(operation);
   }
 
   public async sendDgraphUpsert(queries: string[], delNquads: string[], setNquads: string[]): Promise<void> {

@@ -1,8 +1,6 @@
 export const MAX_TRANSACTION_RETRIES = 3;
 export const INITIALIZATION_CHECK_PERIOD = 10;
 export const MAX_INITIALIZATION_TIMEOUT_DURATION = 1500;
-export const MAX_SCHEMA_ALTER_TIMEOUT_DURATION = 3000;
-export const SCHEMA_ALTER_ATTEMPT_PERIOD = 100;
 export const NON_RDF_KEYS = new Set([ 'uid', 'uri', 'container', 'dgraph.type' ]);
 export const DEFAULT_SCHEMA = `
   <_value.#i>: int @index(int) .

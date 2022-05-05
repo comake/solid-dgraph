@@ -1,6 +1,5 @@
 import dgraph from 'dgraph-js';
 import { DgraphClient } from '../../src/DgraphClient';
-import * as DgraphUtil from '../../src/DgraphUtil';
 
 jest.mock('dgraph-js');
 const mockDgraph = dgraph as jest.Mocked<typeof dgraph>;
@@ -77,26 +76,6 @@ describe('A DgraphClient', (): void => {
   it('alters the schema.', async(): Promise<void> => {
     await expect(client.setSchema('schema')).resolves.toBeUndefined();
     expect(alter).toHaveBeenCalledWith(operation);
-  });
-
-  it('errors on setting the schema if the client cannot connect within the max timeout.', async(): Promise<void> => {
-    jest.useFakeTimers();
-    jest.mock('../../src/DgraphUtil');
-    const mockDgraphUtil = DgraphUtil as jest.Mocked<typeof DgraphUtil>;
-    (mockDgraphUtil.MAX_SCHEMA_ALTER_TIMEOUT_DURATION as unknown) = 0;
-
-    alterError = new Error('14 UNAVAILABLE: No connection established');
-    const promise = client.setSchema('schema').catch((error: any): void => {
-      // eslint-disable-next-line jest/no-conditional-expect
-      expect(error).toBe(alterError);
-    });
-    expect(alter).toHaveBeenCalledTimes(1);
-    expect(alter).toHaveBeenCalledWith(operation);
-    jest.advanceTimersByTime(DgraphUtil.SCHEMA_ALTER_ATTEMPT_PERIOD);
-    await promise;
-    expect(alter).toHaveBeenCalledTimes(2);
-    jest.runAllTimers();
-    jest.useRealTimers();
   });
 
   it('sends upsert queries.', async(): Promise<void> => {
