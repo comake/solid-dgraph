@@ -6,15 +6,14 @@ import { BasicRepresentation, RepresentationMetadata, NotFoundHttpError,
   SingleRootIdentifierStrategy, guardedStreamFrom, INTERNAL_QUADS,
   CONTENT_TYPE_TERM, LDP, RDF } from '@solid/community-server';
 import arrayifyStream from 'arrayify-stream';
-import dgraph from 'dgraph-js';
 import { DataFactory, Literal } from 'n3';
+import { DgraphClient } from '../../src/DgraphClient';
 import { DgraphDataAccessor } from '../../src/DgraphDataAccessor';
 import * as DgraphUtil from '../../src/DgraphUtil';
 
 const { literal, namedNode, quad } = DataFactory;
 
-jest.mock('dgraph-js');
-const mockDgraph = dgraph as jest.Mocked<typeof dgraph>;
+jest.mock('../../src/DgraphClient');
 
 const MOCK_DGRAPH_SCHEMA = '<uri>: string @index(exact) .';
 
@@ -41,14 +40,12 @@ describe('A DgraphDataAccessor', (): void => {
   let accessor: DgraphDataAccessor;
   let metadata: RepresentationMetadata;
   let data: Guarded<Readable>;
-  let newTxn: jest.Mock<dgraph.Txn>;
-  let alter: any;
   let setSchema: any;
-  let queryWithVars: jest.Mock<Promise<dgraph.Response>>;
+  let sendDgraphQuery: any;
+  let sendDgraphUpsert: any;
+
   let queryError: any;
   let updateError: any;
-  let doRequest: any;
-  let discard: any;
   let dgraphJsonResponse: any;
 
   beforeEach(async(): Promise<void> => {
@@ -71,59 +68,24 @@ describe('A DgraphDataAccessor', (): void => {
         },
       }],
     };
+
+    setSchema = jest.fn();
+
     // Makes it so the `queryWithVars` will always return `data`
-    queryWithVars = jest.fn(async(): Promise<any> => {
+    sendDgraphQuery = jest.fn(async(): Promise<any> => {
       if (queryError) {
         throw queryError;
       }
-      return { getJson: jest.fn((): any => dgraphJsonResponse) };
+      return dgraphJsonResponse;
     });
 
-    doRequest = jest.fn((): void => {
+    sendDgraphUpsert = jest.fn((): void => {
       if (updateError) {
         throw updateError;
       }
     });
-    discard = jest.fn();
-    newTxn = jest.fn((): any => ({ queryWithVars, doRequest, discard }));
-    alter = jest.fn();
-    setSchema = jest.fn();
 
-    class MutationMock {
-      public setNquads?: string;
-      public delNquads?: string;
-
-      public setSetNquads(setNquads: string): void {
-        this.setNquads = setNquads;
-      }
-
-      public setDelNquads(delNquads: string): void {
-        this.delNquads = delNquads;
-      }
-    }
-
-    class RequestMock {
-      public query?: string;
-      public mutations: MutationMock[] = [];
-
-      public setQuery(query: string): void {
-        this.query = query;
-      }
-
-      public setMutationsList(mutations: MutationMock[]): void {
-        this.mutations = mutations;
-      }
-
-      public setCommitNow(): void {
-        // Do nothing
-      }
-    }
-
-    (mockDgraph.DgraphClient as jest.Mock).mockReturnValue({ newTxn, alter });
-    (mockDgraph.Mutation as unknown as jest.Mock).mockImplementation((): MutationMock => new MutationMock());
-    (mockDgraph.Request as unknown as jest.Mock).mockImplementation((): RequestMock => new RequestMock());
-    (mockDgraph.Operation as unknown as jest.Mock).mockReturnValue({ setSchema });
-    (mockDgraph.ERR_ABORTED as unknown) = new Error('Transaction has been aborted. Please retry');
+    (DgraphClient as unknown as jest.Mock).mockReturnValue({ setSchema, sendDgraphQuery, sendDgraphUpsert });
   });
 
   describe('with input schema', (): void => {
@@ -133,7 +95,6 @@ describe('A DgraphDataAccessor', (): void => {
 
     it('sets the DgraphClient schema using input schema.', async(): Promise<void> => {
       await accessor.getData({ path: 'http://identifier' });
-      expect(alter).toHaveBeenCalledTimes(1);
       expect(setSchema).toHaveBeenCalledTimes(1);
       expect(setSchema).toHaveBeenCalledWith(MOCK_DGRAPH_SCHEMA);
     });
@@ -146,7 +107,6 @@ describe('A DgraphDataAccessor', (): void => {
 
     it('sets the DgraphClient schema using the default schema.', async(): Promise<void> => {
       await accessor.getData({ path: 'http://identifier' });
-      expect(alter).toHaveBeenCalledTimes(1);
       expect(setSchema).toHaveBeenCalledTimes(1);
       expect(setSchema).toHaveBeenCalledWith(DgraphUtil.DEFAULT_SCHEMA);
     });
@@ -159,7 +119,7 @@ describe('A DgraphDataAccessor', (): void => {
       (mockDgraphUtil.MAX_INITIALIZATION_TIMEOUT_DURATION as unknown) = 0;
 
       // Make the schema alter operation take a long time
-      alter.mockImplementation(
+      setSchema.mockImplementation(
         async(): Promise<void> => new Promise((resolve): void => {
           setTimeout(resolve, 1000);
         }),
@@ -194,8 +154,8 @@ describe('A DgraphDataAccessor', (): void => {
         quad(namedNode('http://this'), namedNode('http://is.com/b'), namedNode('http://is.com/c')),
       ]);
 
-      expect(queryWithVars).toHaveBeenCalledTimes(1);
-      expect(simplifyQuery(queryWithVars.mock.calls[0][0])).toBe(simplifyQuery([
+      expect(sendDgraphQuery).toHaveBeenCalledTimes(1);
+      expect(simplifyQuery(sendDgraphQuery.mock.calls[0][0])).toBe(simplifyQuery([
         'query data($identifier: string) {',
         ' entity as var(func: eq(<uri>, $identifier)) @filter(eq(<dgraph.type>, "Entity"))',
         ' data(func: has(container)) @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "EntityData")) {',
@@ -205,17 +165,7 @@ describe('A DgraphDataAccessor', (): void => {
         ' }',
         '}',
       ]));
-      expect(queryWithVars.mock.calls[0][1]).toStrictEqual({ $identifier: 'http://identifier' });
-    });
-
-    it('should retry aborted query requests up to 3 times on abort errors.', async(): Promise<void> => {
-      queryError = mockDgraph.ERR_ABORTED;
-      await expect(accessor.getData({ path: 'http://identifier' })).rejects.toThrow(dgraph.ERR_ABORTED);
-
-      expect(newTxn).toHaveBeenCalledTimes(3);
-      expect(queryWithVars).toHaveBeenCalledTimes(3);
-
-      queryError = undefined;
+      expect(sendDgraphQuery.mock.calls[0][1]).toStrictEqual({ $identifier: 'http://identifier' });
     });
 
     it('should resolve json arrays to quads.', async(): Promise<void> => {
@@ -315,8 +265,8 @@ describe('A DgraphDataAccessor', (): void => {
         quad(namedNode('http://identifier'), CONTENT_TYPE_TERM, literal(INTERNAL_QUADS)),
       ]);
 
-      expect(queryWithVars).toHaveBeenCalledTimes(1);
-      expect(simplifyQuery(queryWithVars.mock.calls[0][0])).toBe(simplifyQuery([
+      expect(sendDgraphQuery).toHaveBeenCalledTimes(1);
+      expect(simplifyQuery(sendDgraphQuery.mock.calls[0][0])).toBe(simplifyQuery([
         'query data($identifier: string) {',
         ' entity as var(func: eq(<uri>, $identifier)) @filter(eq(<dgraph.type>, "Entity"))',
         ' data(func: has(container)) @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata")) {',
@@ -326,7 +276,7 @@ describe('A DgraphDataAccessor', (): void => {
         ' }',
         '}',
       ]));
-      expect(queryWithVars.mock.calls[0][1]).toStrictEqual({ $identifier: 'http://identifier' });
+      expect(sendDgraphQuery.mock.calls[0][1]).toStrictEqual({ $identifier: 'http://identifier' });
     });
 
     it('does not set the content-type for container metadata.', async(): Promise<void> => {
@@ -336,8 +286,8 @@ describe('A DgraphDataAccessor', (): void => {
         quad(namedNode('http://this'), namedNode('http://is.com/b'), namedNode('http://is.com/c')),
       ]);
 
-      expect(queryWithVars).toHaveBeenCalledTimes(1);
-      expect(simplifyQuery(queryWithVars.mock.calls[0][0])).toBe(simplifyQuery([
+      expect(sendDgraphQuery).toHaveBeenCalledTimes(1);
+      expect(simplifyQuery(sendDgraphQuery.mock.calls[0][0])).toBe(simplifyQuery([
         'query data($identifier: string) {',
         ' entity as var(func: eq(<uri>, $identifier)) @filter(eq(<dgraph.type>, "Entity"))',
         ' data(func: has(container)) @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata")) {',
@@ -347,7 +297,7 @@ describe('A DgraphDataAccessor', (): void => {
         ' }',
         '}',
       ]));
-      expect(queryWithVars.mock.calls[0][1]).toStrictEqual({ $identifier: 'http://container/' });
+      expect(sendDgraphQuery.mock.calls[0][1]).toStrictEqual({ $identifier: 'http://container/' });
     });
 
     it('throws 404 if no metadata was found.', async(): Promise<void> => {
@@ -355,8 +305,8 @@ describe('A DgraphDataAccessor', (): void => {
       dgraphJsonResponse = { data: []};
       await expect(accessor.getMetadata({ path: 'http://identifier' })).rejects.toThrow(NotFoundHttpError);
 
-      expect(queryWithVars).toHaveBeenCalledTimes(1);
-      expect(simplifyQuery(queryWithVars.mock.calls[0][0])).toBe(simplifyQuery([
+      expect(sendDgraphQuery).toHaveBeenCalledTimes(1);
+      expect(simplifyQuery(sendDgraphQuery.mock.calls[0][0])).toBe(simplifyQuery([
         'query data($identifier: string) {',
         ' entity as var(func: eq(<uri>, $identifier)) @filter(eq(<dgraph.type>, "Entity"))',
         ' data(func: has(container)) @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata")) {',
@@ -366,7 +316,7 @@ describe('A DgraphDataAccessor', (): void => {
         ' }',
         '}',
       ]));
-      expect(queryWithVars.mock.calls[0][1]).toStrictEqual({ $identifier: 'http://identifier' });
+      expect(sendDgraphQuery.mock.calls[0][1]).toStrictEqual({ $identifier: 'http://identifier' });
     });
 
     it('requests the container data to find its children.', async(): Promise<void> => {
@@ -383,8 +333,8 @@ describe('A DgraphDataAccessor', (): void => {
       expect(children).toHaveLength(1);
       expect(children[0].identifier.value).toBe('http://container/child');
 
-      expect(queryWithVars).toHaveBeenCalledTimes(1);
-      expect(simplifyQuery(queryWithVars.mock.calls[0][0])).toBe(simplifyQuery([
+      expect(sendDgraphQuery).toHaveBeenCalledTimes(1);
+      expect(simplifyQuery(sendDgraphQuery.mock.calls[0][0])).toBe(simplifyQuery([
         'query data($identifier: string) {',
         ' entity as var(func: eq(<uri>, $identifier)) @filter(eq(<dgraph.type>, "Entity"))',
         ' data(func: eq(<dgraph.type>, "Entity")) @filter(uid_in(<container>, uid(entity))) {',
@@ -392,7 +342,7 @@ describe('A DgraphDataAccessor', (): void => {
         ' }',
         '}',
       ]));
-      expect(queryWithVars.mock.calls[0][1]).toStrictEqual({ $identifier: 'http://container/' });
+      expect(sendDgraphQuery.mock.calls[0][1]).toStrictEqual({ $identifier: 'http://container/' });
     });
 
     it('overwrites the metadata when writing a container and updates parent.', async(): Promise<void> => {
@@ -402,22 +352,20 @@ describe('A DgraphDataAccessor', (): void => {
       );
       await expect(accessor.writeContainer({ path: 'http://test.com/container/' }, metadata)).resolves.toBeUndefined();
 
-      expect(doRequest).toHaveBeenCalledTimes(1);
-      expect(simplifyQuery(doRequest.mock.calls[0][0].query)).toBe(simplifyQuery([
-        'query {',
-        ' entity as var(func: eq(<uri>, "http://test.com/container/")) @filter(eq(<dgraph.type>, "Entity"))',
-        ' entityMetadata as var(func: has(container))',
-        '   @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata"))',
-        ` Metadata00 as var(func: eq(<uri>, "${LDP.terms.Resource.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
-        ` Metadata01 as var(func: eq(<uri>, "${LDP.terms.Container.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
-        ' parent as var(func: eq(<uri>, "http://test.com/")) @filter(eq(<dgraph.type>, "Entity"))',
-        '}',
+      expect(sendDgraphUpsert).toHaveBeenCalledTimes(1);
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][0])).toBe(simplifyQuery([
+        'entity as var(func: eq(<uri>, "http://test.com/container/")) @filter(eq(<dgraph.type>, "Entity"))',
+        'entityMetadata as var(func: has(container))',
+        ' @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata"))',
+        `Metadata00 as var(func: eq(<uri>, "${LDP.terms.Resource.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
+        `Metadata01 as var(func: eq(<uri>, "${LDP.terms.Container.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
+        'parent as var(func: eq(<uri>, "http://test.com/")) @filter(eq(<dgraph.type>, "Entity"))',
       ]));
 
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].delNquads)).toBe(
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][1])).toBe(
         simplifyQuery('uid(entityMetadata) * * .'),
       );
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].setNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][2])).toBe(simplifyQuery([
         'uid(entity) <uri> "http://test.com/container/" .',
         'uid(entity) <dgraph.type> "Entity" .',
         '_:Metadata0 <uri> "http://test.com/container/" .',
@@ -442,21 +390,18 @@ describe('A DgraphDataAccessor', (): void => {
       );
       await expect(accessor.writeContainer({ path: 'http://test.com/' }, metadata)).resolves.toBeUndefined();
 
-      expect(doRequest).toHaveBeenCalledTimes(1);
-      expect(simplifyQuery(doRequest.mock.calls[0][0].query)).toBe(simplifyQuery([
-        'query {',
-        ' entity as var(func: eq(<uri>, "http://test.com/")) @filter(eq(<dgraph.type>, "Entity"))',
-        ' entityMetadata as var(func: has(container))',
-        '   @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata"))',
-        ` Metadata00 as var(func: eq(<uri>, "${LDP.terms.Resource.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
-        ` Metadata01 as var(func: eq(<uri>, "${LDP.terms.Container.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
-        '}',
+      expect(sendDgraphUpsert).toHaveBeenCalledTimes(1);
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][0])).toBe(simplifyQuery([
+        'entity as var(func: eq(<uri>, "http://test.com/")) @filter(eq(<dgraph.type>, "Entity"))',
+        'entityMetadata as var(func: has(container))',
+        ' @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata"))',
+        `Metadata00 as var(func: eq(<uri>, "${LDP.terms.Resource.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
+        `Metadata01 as var(func: eq(<uri>, "${LDP.terms.Container.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
       ]));
-      expect(doRequest.mock.calls[0][0].mutations).toHaveLength(1);
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].delNquads)).toBe(
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][1])).toBe(
         simplifyQuery('uid(entityMetadata) * * .'),
       );
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].setNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][2])).toBe(simplifyQuery([
         'uid(entity) <uri> "http://test.com/" .',
         'uid(entity) <dgraph.type> "Entity" .',
         '_:Metadata0 <uri> "http://test.com/" .',
@@ -479,7 +424,7 @@ describe('A DgraphDataAccessor', (): void => {
       (mockDgraphUtil.MAX_INITIALIZATION_TIMEOUT_DURATION as unknown) = 0;
 
       // Make the schema alter operation take a long time
-      alter.mockImplementation(
+      setSchema.mockImplementation(
         async(): Promise<void> => new Promise((resolve): void => {
           setTimeout(resolve, 1000);
         }),
@@ -509,26 +454,23 @@ describe('A DgraphDataAccessor', (): void => {
       await expect(accessor.writeDocument({ path: 'http://test.com/container/resource' }, data, metadata))
         .resolves.toBeUndefined();
 
-      expect(doRequest).toHaveBeenCalledTimes(1);
-      expect(simplifyQuery(doRequest.mock.calls[0][0].query)).toBe(simplifyQuery([
-        'query {',
-        ' entity as var(func: eq(<uri>, "http://test.com/container/resource")) @filter(eq(<dgraph.type>, "Entity"))',
-        ' entityMetadata as var(func: has(container))',
-        '   @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata"))',
-        ` Metadata00 as var(func: eq(<uri>, "${LDP.terms.Resource.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
-        ' parent as var(func: eq(<uri>, "http://test.com/container/")) @filter(eq(<dgraph.type>, "Entity"))',
-        ' entityEntityData as var(func: has(container))',
-        '   @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "EntityData"))',
-        ' EntityData00 as var(func: eq(<_value.%>, "value"))',
-        '   @filter(eq(<language>, "") and eq(<datatype>, "http://www.w3.org/2001/XMLSchema#string"))',
-        '}',
+      expect(sendDgraphUpsert).toHaveBeenCalledTimes(1);
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][0])).toBe(simplifyQuery([
+        'entity as var(func: eq(<uri>, "http://test.com/container/resource")) @filter(eq(<dgraph.type>, "Entity"))',
+        'entityMetadata as var(func: has(container))',
+        ' @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata"))',
+        `Metadata00 as var(func: eq(<uri>, "${LDP.terms.Resource.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
+        'parent as var(func: eq(<uri>, "http://test.com/container/")) @filter(eq(<dgraph.type>, "Entity"))',
+        'entityEntityData as var(func: has(container))',
+        ' @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "EntityData"))',
+        'EntityData00 as var(func: eq(<_value.%>, "value"))',
+        ' @filter(eq(<language>, "") and eq(<datatype>, "http://www.w3.org/2001/XMLSchema#string"))',
       ]));
-      expect(doRequest.mock.calls[0][0].mutations).toHaveLength(1);
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].delNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][1])).toBe(simplifyQuery([
         'uid(entityMetadata) * * .',
         'uid(entityEntityData) * * .',
       ]));
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].setNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][2])).toBe(simplifyQuery([
         'uid(entity) <uri> "http://test.com/container/resource" .',
         'uid(entity) <dgraph.type> "Entity" .',
         '_:Metadata0 <uri> "http://test.com/container/resource" .',
@@ -559,24 +501,21 @@ describe('A DgraphDataAccessor', (): void => {
       await expect(accessor.writeDocument({ path: 'http://test.com/container/resource' }, empty, metadata))
         .resolves.toBeUndefined();
 
-      expect(doRequest).toHaveBeenCalledTimes(1);
-      expect(simplifyQuery(doRequest.mock.calls[0][0].query)).toBe(simplifyQuery([
-        'query {',
-        ' entity as var(func: eq(<uri>, "http://test.com/container/resource")) @filter(eq(<dgraph.type>, "Entity"))',
-        ' entityMetadata as var(func: has(container))',
-        '   @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata"))',
-        ` Metadata00 as var(func: eq(<uri>, "${LDP.terms.Resource.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
-        ' parent as var(func: eq(<uri>, "http://test.com/container/")) @filter(eq(<dgraph.type>, "Entity"))',
-        ' entityEntityData as var(func: has(container))',
-        '   @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "EntityData"))',
-        '}',
+      expect(sendDgraphUpsert).toHaveBeenCalledTimes(1);
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][0])).toBe(simplifyQuery([
+        'entity as var(func: eq(<uri>, "http://test.com/container/resource")) @filter(eq(<dgraph.type>, "Entity"))',
+        'entityMetadata as var(func: has(container))',
+        ' @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata"))',
+        `Metadata00 as var(func: eq(<uri>, "${LDP.terms.Resource.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
+        'parent as var(func: eq(<uri>, "http://test.com/container/")) @filter(eq(<dgraph.type>, "Entity"))',
+        'entityEntityData as var(func: has(container))',
+        ' @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "EntityData"))',
       ]));
-      expect(doRequest.mock.calls[0][0].mutations).toHaveLength(1);
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].delNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][1])).toBe(simplifyQuery([
         'uid(entityMetadata) * * .',
         'uid(entityEntityData) * * .',
       ]));
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].setNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][2])).toBe(simplifyQuery([
         'uid(entity) <uri> "http://test.com/container/resource" .',
         'uid(entity) <dgraph.type> "Entity" .',
         '_:Metadata0 <uri> "http://test.com/container/resource" .',
@@ -600,7 +539,7 @@ describe('A DgraphDataAccessor', (): void => {
       await expect(accessor.writeDocument({ path: 'http://test.com/container/resource' }, empty, metadata))
         .resolves.toBeUndefined();
 
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].setNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][2])).toBe(simplifyQuery([
         'uid(entity) <uri> "http://test.com/container/resource" .',
         'uid(entity) <dgraph.type> "Entity" .',
         '_:Metadata0 <uri> "http://test.com/container/resource" .',
@@ -626,7 +565,7 @@ describe('A DgraphDataAccessor', (): void => {
       await expect(accessor.writeDocument({ path: 'http://test.com/container/resource' }, empty, metadata))
         .resolves.toBeUndefined();
 
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].setNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][2])).toBe(simplifyQuery([
         'uid(entity) <uri> "http://test.com/container/resource" .',
         'uid(entity) <dgraph.type> "Entity" .',
         '_:Metadata0 <uri> "http://test.com/container/resource" .',
@@ -656,7 +595,7 @@ describe('A DgraphDataAccessor', (): void => {
       await expect(accessor.writeDocument({ path: 'http://test.com/container/resource' }, empty, metadata))
         .resolves.toBeUndefined();
 
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].setNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][2])).toBe(simplifyQuery([
         'uid(entity) <uri> "http://test.com/container/resource" .',
         'uid(entity) <dgraph.type> "Entity" .',
         '_:Metadata0 <uri> "http://test.com/container/resource" .',
@@ -693,7 +632,7 @@ describe('A DgraphDataAccessor', (): void => {
       await expect(accessor.writeDocument({ path: 'http://test.com/container/resource' }, empty, metadata))
         .resolves.toBeUndefined();
 
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].setNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][2])).toBe(simplifyQuery([
         'uid(entity) <uri> "http://test.com/container/resource" .',
         'uid(entity) <dgraph.type> "Entity" .',
         '_:Metadata0 <uri> "http://test.com/container/resource" .',
@@ -723,7 +662,7 @@ describe('A DgraphDataAccessor', (): void => {
       await expect(accessor.writeDocument({ path: 'http://test.com/container/resource' }, empty, metadata))
         .resolves.toBeUndefined();
 
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].setNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][2])).toBe(simplifyQuery([
         'uid(entity) <uri> "http://test.com/container/resource" .',
         'uid(entity) <dgraph.type> "Entity" .',
         '_:Metadata0 <uri> "http://test.com/container/resource" .',
@@ -749,7 +688,7 @@ describe('A DgraphDataAccessor', (): void => {
       await expect(accessor.writeDocument({ path: 'http://test.com/container/resource' }, empty, metadata))
         .resolves.toBeUndefined();
 
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].setNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][2])).toBe(simplifyQuery([
         'uid(entity) <uri> "http://test.com/container/resource" .',
         'uid(entity) <dgraph.type> "Entity" .',
         '_:Metadata0 <uri> "http://test.com/container/resource" .',
@@ -765,33 +704,18 @@ describe('A DgraphDataAccessor', (): void => {
       ]));
     });
 
-    it('retries aborted write requests up to 3 times on abort errors.', async(): Promise<void> => {
-      const identifier = { path: 'http://test.com/container/resource' };
-      metadata = new RepresentationMetadata(identifier);
-
-      updateError = mockDgraph.ERR_ABORTED;
-      await expect(accessor.writeDocument(identifier, data, metadata)).rejects.toThrow(dgraph.ERR_ABORTED);
-
-      expect(newTxn).toHaveBeenCalledTimes(3);
-      expect(doRequest).toHaveBeenCalledTimes(3);
-
-      updateError = undefined;
-    });
-
     it('removes all references when deleting a resource.', async(): Promise<void> => {
       metadata = new RepresentationMetadata({ path: 'http://test.com/container/' },
         { [RDF.type]: [ LDP.terms.Resource, LDP.terms.Container ]});
       await expect(accessor.deleteResource({ path: 'http://test.com/container/' })).resolves.toBeUndefined();
 
-      expect(simplifyQuery(doRequest.mock.calls[0][0].query)).toBe(simplifyQuery([
-        'query {',
-        ' entity as var(func: eq(<uri>, "http://test.com/container/")) @filter(eq(<dgraph.type>, "Entity"))',
-        ' dataInEntity as var(func: has(container)) @filter(uid_in(container, uid(entity)))',
-        ' parent as var(func: eq(<uri>, "http://test.com/")) @filter(eq(<dgraph.type>, "Entity"))',
-        '}',
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][0])).toBe(simplifyQuery([
+        'entity as var(func: eq(<uri>, "http://test.com/container/")) @filter(eq(<dgraph.type>, "Entity"))',
+        'dataInEntity as var(func: has(container)) @filter(uid_in(container, uid(entity)))',
+        'parent as var(func: eq(<uri>, "http://test.com/")) @filter(eq(<dgraph.type>, "Entity"))',
       ]));
 
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].delNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][1])).toBe(simplifyQuery([
         'uid(entity) * * .',
         'uid(dataInEntity) * * .',
         `uid(entity) <container> uid(parent) .`,
@@ -803,14 +727,12 @@ describe('A DgraphDataAccessor', (): void => {
         { [RDF.type]: [ LDP.terms.Resource, LDP.terms.Container ]});
       await expect(accessor.deleteResource({ path: 'http://test.com/' })).resolves.toBeUndefined();
 
-      expect(simplifyQuery(doRequest.mock.calls[0][0].query)).toBe(simplifyQuery([
-        'query {',
-        ' entity as var(func: eq(<uri>, "http://test.com/")) @filter(eq(<dgraph.type>, "Entity"))',
-        ' dataInEntity as var(func: has(container)) @filter(uid_in(container, uid(entity)))',
-        '}',
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][0])).toBe(simplifyQuery([
+        'entity as var(func: eq(<uri>, "http://test.com/")) @filter(eq(<dgraph.type>, "Entity"))',
+        'dataInEntity as var(func: has(container)) @filter(uid_in(container, uid(entity)))',
       ]));
 
-      expect(simplifyQuery(doRequest.mock.calls[0][0].mutations[0].delNquads)).toBe(simplifyQuery([
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][1])).toBe(simplifyQuery([
         'uid(entity) * * .',
         'uid(dataInEntity) * * .',
       ]));
