@@ -355,7 +355,12 @@ export class DgraphDataAccessor implements DataAccessor {
     this.initializingClient = true;
     this.logger.info(`Initializing Dgraph Client`);
     this.dgraphClient = new DgraphClient(this.configuration);
-    await this.dgraphClient.setSchema(this.configuration.schema ?? DEFAULT_SCHEMA);
+    try {
+      await this.dgraphClient.setSchema(this.configuration.schema ?? DEFAULT_SCHEMA);
+    } catch (error: unknown) {
+      this.initializingClient = false;
+      throw error;
+    }
     this.clientInitialized = true;
     this.initializingClient = false;
     this.logger.info(`Initialized Dgraph Client`);

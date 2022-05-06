@@ -446,6 +446,23 @@ describe('A DgraphDataAccessor', (): void => {
       jest.useRealTimers();
     });
 
+    it('errors during an upsert when the database throws an error upon initialization.', async():
+    Promise<void> => {
+      jest.useFakeTimers();
+      jest.mock('../../src/DgraphUtil');
+      const mockDgraphUtil = DgraphUtil as jest.Mocked<typeof DgraphUtil>;
+      (mockDgraphUtil.MAX_INITIALIZATION_TIMEOUT_DURATION as unknown) = 0;
+
+      setSchema.mockRejectedValue(new Error('14 UNAVAILABLE: No connection established'));
+      metadata = new RepresentationMetadata(
+        { path: 'http://test.com/container/' },
+        { [RDF.type]: [ LDP.terms.Resource, LDP.terms.Container ]},
+      );
+
+      await expect(accessor.writeContainer({ path: 'http://test.com/container/' }, metadata))
+        .rejects.toThrow('14 UNAVAILABLE: No connection established');
+    });
+
     it('overwrites the data and metadata when writing a resource and updates parent.', async(): Promise<void> => {
       metadata = new RepresentationMetadata(
         { path: 'http://test.com/container/resource' },
@@ -747,7 +764,7 @@ describe('A DgraphDataAccessor', (): void => {
       await expect(result).rejects.toThrow('Only triples in the default graph are supported.');
     });
 
-    it('errors when the DGraph endpoint fails during reading.', async(): Promise<void> => {
+    it('errors when the Dgraph endpoint fails during reading.', async(): Promise<void> => {
       queryError = 'error';
       await expect(accessor.getMetadata({ path: 'http://identifier' })).rejects.toBe(queryError);
 
