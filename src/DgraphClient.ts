@@ -52,7 +52,7 @@ export class DgraphClient {
     try {
       return await transactionBlock(transaction);
     } catch (error: unknown) {
-      if (error === dgraph.ERR_ABORTED && tries < MAX_TRANSACTION_RETRIES) {
+      if (this.isRetriableTransactionError(error) && tries < MAX_TRANSACTION_RETRIES) {
         return await this.performBlockWithTransaction(transactionBlock, tries + 1);
       }
       throw error;
@@ -70,5 +70,11 @@ export class DgraphClient {
       mutation.setDelNquads(delNquads.join('\n'));
     }
     return mutation;
+  }
+
+  private isRetriableTransactionError(error: unknown): boolean {
+    return error === dgraph.ERR_ABORTED ||
+      error === '14 UNAVAILABLE: Connection dropped' ||
+      error === '14 UNAVAILABLE: read ECONNRESET';
   }
 }
