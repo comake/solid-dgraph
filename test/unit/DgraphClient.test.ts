@@ -101,14 +101,57 @@ describe('A DgraphClient', (): void => {
     expect(discard).toHaveBeenCalled();
   });
 
-  it('retries aborted query requests up to 3 times on abort errors.', async(): Promise<void> => {
+  it('retries aborted query requests up to 3 times.', async(): Promise<void> => {
     queryError = mockDgraph.ERR_ABORTED;
     await expect(client.sendDgraphQuery(query, vars)).rejects.toThrow(dgraph.ERR_ABORTED);
-
     expect(newTxn).toHaveBeenCalledTimes(3);
     expect(queryWithVars).toHaveBeenCalledTimes(3);
     expect(discard).toHaveBeenCalledTimes(3);
+    queryError = undefined;
+  });
 
+  it('retries dropped query requests up to 3 times.', async(): Promise<void> => {
+    queryError = Object.assign(
+      new Error('14 UNAVAILABLE: Connection dropped'),
+      { code: 14, details: 'Connection dropped' },
+    );
+    await expect(client.sendDgraphQuery(query, vars)).rejects.toThrow('14 UNAVAILABLE: Connection dropped');
+    expect(newTxn).toHaveBeenCalledTimes(3);
+    expect(queryWithVars).toHaveBeenCalledTimes(3);
+    expect(discard).toHaveBeenCalledTimes(3);
+    queryError = undefined;
+  });
+
+  it('retries connection reset query requests up to 3 times.', async(): Promise<void> => {
+    queryError = Object.assign(
+      new Error('14 UNAVAILABLE: read ECONNRESET'),
+      { code: 14, details: 'read ECONNRESET' },
+    );
+    await expect(client.sendDgraphQuery(query, vars)).rejects.toThrow('14 UNAVAILABLE: read ECONNRESET');
+    expect(newTxn).toHaveBeenCalledTimes(3);
+    expect(queryWithVars).toHaveBeenCalledTimes(3);
+    expect(discard).toHaveBeenCalledTimes(3);
+    queryError = undefined;
+  });
+
+  it('retries no connection established query requests up to 3 times.', async(): Promise<void> => {
+    queryError = Object.assign(
+      new Error('14 UNAVAILABLE: No connection established'),
+      { code: 14, details: 'No connection established' },
+    );
+    await expect(client.sendDgraphQuery(query, vars)).rejects.toThrow('14 UNAVAILABLE: No connection established');
+    expect(newTxn).toHaveBeenCalledTimes(3);
+    expect(queryWithVars).toHaveBeenCalledTimes(3);
+    expect(discard).toHaveBeenCalledTimes(3);
+    queryError = undefined;
+  });
+
+  it('does not retry errors which are not aborts or UNAVAILABLE errors.', async(): Promise<void> => {
+    queryError = new Error('random error');
+    await expect(client.sendDgraphQuery(query, vars)).rejects.toThrow('random error');
+    expect(newTxn).toHaveBeenCalledTimes(1);
+    expect(queryWithVars).toHaveBeenCalledTimes(1);
+    expect(discard).toHaveBeenCalledTimes(1);
     queryError = undefined;
   });
 });

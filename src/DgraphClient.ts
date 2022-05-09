@@ -3,6 +3,13 @@ import dgraph, { Operation } from 'dgraph-js';
 import { MAX_TRANSACTION_RETRIES } from './DgraphUtil';
 import type { DgraphConfiguration } from './DgraphUtil';
 
+const GRPC_UNAVAILABLE_ERROR_CODE = 14;
+const GRPC_UNAVAILABLE_ERROR_DETAILS = new Set([
+  'Connection dropped',
+  'read ECONNRESET',
+  'No connection established',
+]);
+
 export class DgraphClient {
   private readonly dgraphClient: dgraph.DgraphClient;
 
@@ -52,7 +59,7 @@ export class DgraphClient {
     try {
       return await transactionBlock(transaction);
     } catch (error: unknown) {
-      if (this.isRetriableTransactionError(error) && tries < MAX_TRANSACTION_RETRIES) {
+      if (error && this.isRetriableTransactionError(error) && tries < MAX_TRANSACTION_RETRIES) {
         return await this.performBlockWithTransaction(transactionBlock, tries + 1);
       }
       throw error;
@@ -73,8 +80,14 @@ export class DgraphClient {
   }
 
   private isRetriableTransactionError(error: unknown): boolean {
-    return error === dgraph.ERR_ABORTED ||
-      error === '14 UNAVAILABLE: Connection dropped' ||
-      error === '14 UNAVAILABLE: read ECONNRESET';
+    return error !== null && (
+      error === dgraph.ERR_ABORTED ||
+      this.isRetriableGrpcError(error as grpc.ServiceError)
+    );
+  }
+
+  private isRetriableGrpcError(error: grpc.ServiceError): boolean {
+    return error.code === GRPC_UNAVAILABLE_ERROR_CODE &&
+      GRPC_UNAVAILABLE_ERROR_DETAILS.has(error.details);
   }
 }
