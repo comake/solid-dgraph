@@ -1,6 +1,6 @@
 {
   "name": "@comake/solid-dgraph",
-  "version": "3.1.4",
+  "version": "3.1.5",
   "description": "A dgraph database backend for a Community Solid Server",
   "keywords": [
     "solid",
