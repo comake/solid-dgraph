@@ -19,7 +19,8 @@ import type {
 } from '@solid/community-server';
 import arrayifyStream from 'arrayify-stream';
 import { DataFactory, Literal } from 'n3';
-import type { Quad, NamedNode } from 'rdf-js';
+import type { Quad_Subject, Quad_Predicate } from 'n3';
+import type { Quad, NamedNode, BlankNode } from 'rdf-js';
 import { DgraphClient } from './DgraphClient';
 import { DgraphUpsert } from './DgraphUpsert';
 import { NON_RDF_KEYS, DEFAULT_SCHEMA,
@@ -27,7 +28,7 @@ import { NON_RDF_KEYS, DEFAULT_SCHEMA,
   wait, literalDatatypeToPrimitivePredicate } from './DgraphUtil';
 import type { ValuePredicate, DgraphConfiguration } from './DgraphUtil';
 
-const { defaultGraph, namedNode, quad } = DataFactory;
+const { defaultGraph, namedNode, quad, blankNode } = DataFactory;
 
 export interface DgraphQuery {
   queryString: string;
@@ -42,6 +43,7 @@ export type DgraphLiteralNode = {
 export type DgraphNamedNode = {
   uid: string;
   uri: string;
+  blankNode: string;
   container?: string;
   'dgraph.type'?: string;
   [k: string]: undefined | string | DgraphNode | DgraphNode[];
@@ -178,7 +180,7 @@ export class DgraphDataAccessor implements DataAccessor {
     metadata: RepresentationMetadata): Promise<void> {
     const { name, parent } = this.getRelatedNames(identifier);
 
-    const triples = await arrayifyStream(data) as Quad[];
+    const triples = await arrayifyStream(data);
     const def = defaultGraph();
 
     if (triples.some((triple): boolean => !def.equals(triple.graph))) {
@@ -293,7 +295,11 @@ export class DgraphDataAccessor implements DataAccessor {
     Object.values(metadataQuadsGroupedBySubject)
       .forEach((quadsWithSameSubject, i): void => {
         const blankNodeName = `${dgraphType}${i}`;
-        dgraphUpsert.addSetNquad(`_:${blankNodeName} <uri> "${quadsWithSameSubject[0].subject.value}" .`);
+        if (quadsWithSameSubject[0].subject.termType === 'BlankNode') {
+          dgraphUpsert.addSetNquad(`_:${blankNodeName} <blankNode> "${quadsWithSameSubject[0].subject.value}" .`);
+        } else {
+          dgraphUpsert.addSetNquad(`_:${blankNodeName} <uri> "${quadsWithSameSubject[0].subject.value}" .`);
+        }
         dgraphUpsert.addSetNquad(`_:${blankNodeName} <container> uid(${containerUidName}) .`);
         dgraphUpsert.addSetNquad(`_:${blankNodeName} <dgraph.type> "${dgraphType}" .`);
         quadsWithSameSubject.forEach((rdfQuad, j): void => {
@@ -314,6 +320,12 @@ export class DgraphDataAccessor implements DataAccessor {
             dgraphUpsert.addSetNquad(`_:${blankNodeName} <${rdfQuad.predicate.value}> uid(${uidVar}) .`);
             dgraphUpsert.addSetNquad(`uid(${uidVar}) <uri> "${rdfQuad.object.value}" .`);
             dgraphUpsert.addSetNquad(`uid(${uidVar}) <dgraph.type> "Entity" .`);
+          } else if (rdfQuad.object.termType === 'BlankNode') {
+            dgraphUpsert.addQuery(this.blankNodeUidVarQuery(uidVar, containerUidName, rdfQuad.object.value));
+            dgraphUpsert.addSetNquad(`_:${blankNodeName} <${rdfQuad.predicate.value}> uid(${uidVar}) .`);
+            dgraphUpsert.addSetNquad(`uid(${uidVar}) <blankNode> "${rdfQuad.object.value}" .`);
+            dgraphUpsert.addSetNquad(`uid(${uidVar}) <container> uid(${containerUidName}) .`);
+            dgraphUpsert.addSetNquad(`uid(${uidVar}) <dgraph.type> "EntityData" .`);
           }
         });
       });
@@ -322,6 +334,11 @@ export class DgraphDataAccessor implements DataAccessor {
   private entityUidVarQuery(uidName: string, uri: string): string {
     return `${uidName} as var(func: eq(<uri>, "${uri}"))
         @filter(eq(<dgraph.type>, "Entity"))`;
+  }
+
+  private blankNodeUidVarQuery(uidName: string, containerUidName: string, blankNodeName: string): string {
+    return `${uidName} as var(func: eq(<blankNode>, "${blankNodeName}"))
+        @filter(uid_in(container, uid(${containerUidName})) and eq(<dgraph.type>, "EntityData"))`;
   }
 
   private dataOfTypeInEntityQuery(entityUidName: string, dgraphType: string): string {
@@ -366,19 +383,22 @@ export class DgraphDataAccessor implements DataAccessor {
     this.logger.info(`Initialized Dgraph Client`);
   }
 
-  private rdfQuadsFromJsonArray(json: DgraphNode[], parent?: string, predicate?: string): Quad[] {
+  private rdfQuadsFromJsonArray(json: DgraphNode[], parent?: Quad_Subject, predicate?: Quad_Predicate): Quad[] {
     return json.reduce((rdf: Quad[], entity: DgraphNode): Quad[] => {
       if (parent && predicate) {
-        rdf.push(quad(namedNode(parent), namedNode(predicate), this.dgraphNodeToTerm(entity)));
-      } else if ('uri' in entity) {
+        rdf.push(quad(parent, predicate, this.dgraphNodeToTerm(entity)));
+      } else if ('uri' in entity || 'blankNode' in entity) {
+        const isBlankNode = 'blankNode' in entity && Boolean(entity.blankNode);
+        const term = isBlankNode ? blankNode(entity.blankNode) : namedNode(entity.uri);
         Object.keys(entity)
           .filter((key): boolean => !NON_RDF_KEYS.has(key))
           .forEach((rdfPredicate): void => {
+            const predicateTerm = namedNode(rdfPredicate);
             const object = entity[rdfPredicate];
             if (Array.isArray(object)) {
-              rdf = [ ...rdf, ...this.rdfQuadsFromJsonArray(object, entity.uri, rdfPredicate) ];
+              rdf = [ ...rdf, ...this.rdfQuadsFromJsonArray(object, term, predicateTerm) ];
             } else if (typeof object === 'object') {
-              rdf = [ ...rdf, ...this.rdfQuadsFromJsonArray([ object ], entity.uri, rdfPredicate) ];
+              rdf = [ ...rdf, ...this.rdfQuadsFromJsonArray([ object ], term, predicateTerm) ];
             }
           });
       }
@@ -386,8 +406,16 @@ export class DgraphDataAccessor implements DataAccessor {
     }, []);
   }
 
-  private dgraphNodeToTerm(entity: DgraphNode): NamedNode | Literal {
-    return 'uri' in entity ? namedNode(entity.uri) : this.dgraphNodeToLiteral(entity);
+  private dgraphNodeToTerm(entity: DgraphNode): NamedNode | BlankNode | Literal {
+    if ('blankNode' in entity && Boolean(entity.blankNode)) {
+      return blankNode(entity.blankNode);
+    }
+
+    if ('uri' in entity) {
+      return namedNode(entity.uri);
+    }
+
+    return this.dgraphNodeToLiteral(entity);
   }
 
   private dgraphNodeToLiteral(literalNode: DgraphLiteralNode): Literal {

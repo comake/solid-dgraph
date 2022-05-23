@@ -9,6 +9,7 @@ export const DEFAULT_SCHEMA = `
   <_value.%>: string @index(fulltext, trigram, hash) .
   <_value.%dt>: dateTime @index(hour) .
   <uri>: string @index(exact) .
+  <blankNode>: string @index(exact) .
   <container>: uid @reverse .
 
   type <Entity> {

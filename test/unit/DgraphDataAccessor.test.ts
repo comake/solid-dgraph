@@ -11,7 +11,7 @@ import { DgraphClient } from '../../src/DgraphClient';
 import { DgraphDataAccessor } from '../../src/DgraphDataAccessor';
 import * as DgraphUtil from '../../src/DgraphUtil';
 
-const { literal, namedNode, quad } = DataFactory;
+const { literal, namedNode, quad, blankNode } = DataFactory;
 
 jest.mock('../../src/DgraphClient');
 
@@ -34,6 +34,7 @@ function simplifyQuery(query: string | string[]): string {
   return query.replace(/\s+|\n/gu, ' ').trim();
 }
 
+/* eslint-disable @typescript-eslint/naming-convention */
 describe('A DgraphDataAccessor', (): void => {
   const base = 'http://test.com/';
   const identifierStrategy = new SingleRootIdentifierStrategy(base);
@@ -166,6 +167,40 @@ describe('A DgraphDataAccessor', (): void => {
         '}',
       ]));
       expect(sendDgraphQuery.mock.calls[0][1]).toStrictEqual({ $identifier: 'http://identifier' });
+    });
+
+    it('should resolve blank nodes to quads.', async(): Promise<void> => {
+      dgraphJsonResponse = {
+        data: [{
+          uid: '0x02',
+          uri: 'https://identifier',
+          'https://best.friend': {
+            'dgraph.type': [ 'EntityData' ],
+            blankNode: '_:blankNode',
+          },
+        }, {
+          uid: '0x03',
+          blankNode: '_:blankNode',
+          'https://is_a': {
+            'dgraph.type': [ 'EntityData' ],
+            uri: 'https://person',
+          },
+        }],
+      };
+
+      const result = await accessor.getData({ path: 'https://identifier' });
+      await expect(arrayifyStream(result)).resolves.toBeRdfIsomorphic([
+        quad(
+          namedNode('https://identifier'),
+          namedNode('https://best.friend'),
+          blankNode('blankNode'),
+        ),
+        quad(
+          blankNode('blankNode'),
+          namedNode('https://is_a'),
+          namedNode('https://person'),
+        ),
+      ]);
     });
 
     it('should resolve json arrays to quads.', async(): Promise<void> => {
@@ -718,6 +753,65 @@ describe('A DgraphDataAccessor', (): void => {
         'uid(parent) <uri> "http://test.com/container/" .',
         'uid(parent) <dgraph.type> "Entity" .',
         'uid(entity) <container> uid(parent) .',
+      ]));
+    });
+
+    it('writes triples with a blank node as object.', async(): Promise<void> => {
+      metadata = new RepresentationMetadata(
+        { path: 'http://test.com/container/resource' },
+        { [RDF.type]: [ LDP.terms.Resource ]},
+      );
+      data = guardedStreamFrom([
+        quad(namedNode('http://name'), namedNode('http://pred'), blankNode('n3-0')),
+        quad(blankNode('n3-0'), namedNode('http://pred'), literal('value')),
+      ]);
+      await expect(accessor.writeDocument({ path: 'http://test.com/container/resource' }, data, metadata))
+        .resolves.toBeUndefined();
+
+      expect(sendDgraphUpsert).toHaveBeenCalledTimes(1);
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][0])).toBe(simplifyQuery([
+        'entity as var(func: eq(<uri>, "http://test.com/container/resource")) @filter(eq(<dgraph.type>, "Entity"))',
+        'entityMetadata as var(func: has(container))',
+        ' @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "Metadata"))',
+        `Metadata00 as var(func: eq(<uri>, "${LDP.terms.Resource.value}")) @filter(eq(<dgraph.type>, "Entity"))`,
+        'parent as var(func: eq(<uri>, "http://test.com/container/")) @filter(eq(<dgraph.type>, "Entity"))',
+        'entityEntityData as var(func: has(container))',
+        ' @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "EntityData"))',
+        'EntityData00 as var(func: eq(<blankNode>, "n3-0"))',
+        ' @filter(uid_in(container, uid(entity)) and eq(<dgraph.type>, "EntityData"))',
+        'EntityData10 as var(func: eq(<_value.%>, "value"))',
+        ' @filter(eq(<language>, "") and eq(<datatype>, "http://www.w3.org/2001/XMLSchema#string"))',
+      ]));
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][1])).toBe(simplifyQuery([
+        'uid(entityMetadata) * * .',
+        'uid(entityEntityData) * * .',
+      ]));
+      expect(simplifyQuery(sendDgraphUpsert.mock.calls[0][2])).toBe(simplifyQuery([
+        'uid(entity) <uri> "http://test.com/container/resource" .',
+        'uid(entity) <dgraph.type> "Entity" .',
+        '_:Metadata0 <uri> "http://test.com/container/resource" .',
+        '_:Metadata0 <container> uid(entity) .',
+        '_:Metadata0 <dgraph.type> "Metadata" .',
+        `_:Metadata0 <${RDF.type}> uid(Metadata00) .`,
+        `uid(Metadata00) <uri> "${LDP.terms.Resource.value}" .`,
+        `uid(Metadata00) <dgraph.type> "Entity" .`,
+        'uid(parent) <uri> "http://test.com/container/" .',
+        'uid(parent) <dgraph.type> "Entity" .',
+        'uid(entity) <container> uid(parent) .',
+        '_:EntityData0 <uri> "http://name" .',
+        '_:EntityData0 <container> uid(entity) .',
+        '_:EntityData0 <dgraph.type> "EntityData" .',
+        `_:EntityData0 <http://pred> uid(EntityData00) .`,
+        'uid(EntityData00) <blankNode> "n3-0" .',
+        'uid(EntityData00) <container> uid(entity) .',
+        'uid(EntityData00) <dgraph.type> "EntityData" .',
+        '_:EntityData1 <blankNode> "n3-0" .',
+        '_:EntityData1 <container> uid(entity) .',
+        '_:EntityData1 <dgraph.type> "EntityData" .',
+        `_:EntityData1 <http://pred> uid(EntityData10) .`,
+        `uid(EntityData10) <_value.%> "value" .`,
+        `uid(EntityData10) <language> "" .`,
+        `uid(EntityData10) <datatype> "http://www.w3.org/2001/XMLSchema#string" .`,
       ]));
     });
 

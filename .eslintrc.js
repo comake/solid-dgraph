@@ -73,6 +73,8 @@ module.exports = {
     'unicorn/prefer-at': 'off',
     // Does not make sense for more complex cases
     'unicorn/prefer-object-from-entries': 'off',
+    // Only supported in Node v15
+    'unicorn/prefer-string-replace-all' : 'off',
     // Can get ugly with large single statements
     'unicorn/prefer-ternary': 'off',
     'yield-star-spacing': [ 'error', 'after' ],
@@ -87,7 +89,7 @@ module.exports = {
       {
         selector: 'default',
         format: [ 'camelCase' ],
-        leadingUnderscore: 'allow',
+        leadingUnderscore: 'forbid',
         trailingUnderscore: 'forbid',
       },
       {
@@ -119,6 +121,7 @@ module.exports = {
     }],
     'import/no-duplicates': 'error',
     'import/no-extraneous-dependencies': 'error',
+    'import/no-named-as-default': 'off',
     // Doesn't work with type imports
     'no-duplicate-imports': 'off',
     'unused-imports/no-unused-imports-ts': 'error',
