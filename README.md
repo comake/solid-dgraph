@@ -14,7 +14,7 @@ From the npm package registry:
 ```shell
 mkdir my-server
 cd my-server
-npm install @solid/community-server@v3.0.0 @comake/solid-dgraph
+npm install @solid/community-server@v4.0.0 @comake/solid-dgraph
 ```
 
 #### Configure
